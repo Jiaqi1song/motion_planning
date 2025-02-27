@@ -1,1 +1,1 @@
-# motion_planning
+# CMU 18-744 Project: Motion Planning in Structured Area with Carla
