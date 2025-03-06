@@ -17,7 +17,7 @@ pip install PythonAPI/carla/dist/carla-0.9.13-cp37-cp37m-win_amd64.whl
 Start Carla server `0.9.13` in Windows11 first with:
 
 ```bash
-./CarlaUE4.exe -quality_level=Low -benchmark -fps=15
+./CarlaUE4.exe -fps=15
 ```
 
 ### Configuration file
