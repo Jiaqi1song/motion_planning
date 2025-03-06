@@ -20,6 +20,12 @@ Start Carla server `0.9.13` in Windows11 first with:
 ./CarlaUE4.exe -fps=15
 ```
 
+Generate some traffic (use to create certain scenario later):
+
+```bash
+python generate_traffic.py -n 40 -w 10
+```
+
 ### Configuration file
 The configuration is located in `config.py`. It contains the following parameters:
 - `algorithm`: The RL algorithm to use. All algorithms from Stable Baselines 3 are supported.
@@ -44,7 +50,7 @@ python vae/train_vae.py --epochs 1000
 ### Training
 Train the model with:
 ```bash
-python train.py --config BEST --total_timesteps 100000 --map Town07
+python train.py --config BEST --total_timesteps 100000 --map Town02
 ```
 
 The training results will be saved in the `tensorboard` folder. You can open it with:
@@ -56,7 +62,7 @@ tensorboard --logdir tensorboard
 Evaluate the model with:
 
 ```bash
-python eval.py --config BEST --map Town07 --model "./tensorboard/<Model ID>/<Model ckpt>.zip" 
+python eval.py --config BEST --map Town02 --model "./tensorboard/<Model ID>/<ckpt>.zip" 
 ```
 
 The evaluation routes can be changed inside `carla_env/envs/carla_env.py` in the `eval_routes` variable. Choose two points in the map and add them to the list.

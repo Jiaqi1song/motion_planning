@@ -400,7 +400,7 @@ class CarlaRouteEnv(gym.Env):
         self.last_reward = self.reward_fn(self)
         self.total_reward += self.last_reward
 
-        # Encode the state
+        # Encode the state (encoded_state is the observation)
         encoded_state = self.encode_state_fn(self)
         if self.decode_vae_fn:
             self.observation_decoded = self.decode_vae_fn(encoded_state['vae_latent'])
