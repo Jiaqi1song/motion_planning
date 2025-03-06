@@ -44,7 +44,7 @@ python vae/train_vae.py --epochs 1000
 ### Training
 Train the model with:
 ```bash
-python train.py --config 1 --total_timesteps 100
+python train.py --config BEST --total_timesteps 100000 --map Town07
 ```
 
 The training results will be saved in the `tensorboard` folder. You can open it with:
@@ -56,7 +56,7 @@ tensorboard --logdir tensorboard
 Evaluate the model with:
 
 ```bash
-python eval.py --config 1 --model "./tensorboard/PPO_1741216403_id1/model_1020_steps.zip"
+python eval.py --config BEST --map Town07 --model "./tensorboard/<Model ID>/<Model ckpt>.zip" 
 ```
 
 The evaluation routes can be changed inside `carla_env/envs/carla_env.py` in the `eval_routes` variable. Choose two points in the map and add them to the list.

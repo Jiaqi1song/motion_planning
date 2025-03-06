@@ -17,6 +17,7 @@ parser.add_argument("--no_render", action="store_false", help="If True, render t
 parser.add_argument("--fps", type=int, default=15, help="FPS to render the environment")
 parser.add_argument("--num_checkpoints", type=int, default=10, help="Checkpoint frequency")
 parser.add_argument("--config", type=str, default="1", help="Config to use (default: 1)")
+parser.add_argument("--map", type=str, default="Town07", help="Map used in the environment (default: Town07)")
 
 args = vars(parser.parse_args())
 config.set_config(args["config"])
@@ -55,7 +56,7 @@ env = CarlaRouteEnv(obs_res=CONFIG["obs_res"], host=args["host"], port=args["por
                     observation_space=observation_space,
                     encode_state_fn=encode_state_fn, decode_vae_fn=decode_vae_fn,
                     fps=args["fps"], action_smoothing=CONFIG["action_smoothing"],
-                    action_space_type='continuous', activate_spectator=False, activate_render=args["no_render"])
+                    action_space_type='continuous', activate_spectator=False, activate_render=args["no_render"], map=args["map"])
 
 for wrapper_class_str in CONFIG["wrappers"]:
     wrap_class, wrap_params = parse_wrapper_class(wrapper_class_str)

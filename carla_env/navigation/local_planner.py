@@ -21,11 +21,13 @@ class RoadOption(Enum):
     """
     RoadOption represents the possible topological configurations when moving from a segment of lane to other.
     """
+    VOID = -1
     LANEFOLLOW = 0
     LEFT = 1
     RIGHT = 2
     STRAIGHT = 3
-    VOID = -1
+    CHANGELANELEFT = 4
+    CHANGELANERIGHT = 5
 
     def __eq__(self, other):
         return self.value == other.value

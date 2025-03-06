@@ -47,7 +47,8 @@ class CarlaRouteEnv(gym.Env):
                  activate_lidar=False,
                  start_carla=False,
                  eval=False,
-                 activate_render=True):
+                 activate_render=True,
+                 map='Town07'):
         """
         A gym-like environment for interacting with a running CARLA environment and controlling a Lincoln MKZ2017 vehicle.
 
@@ -126,7 +127,7 @@ class CarlaRouteEnv(gym.Env):
             self.client.set_timeout(60.0)
 
             # Create world wrapper
-            self.world = World(self.client)
+            self.world = World(self.client, map)
 
             settings = self.world.get_settings()
             settings.fixed_delta_seconds = 1 / self.fps
@@ -268,6 +269,10 @@ class CarlaRouteEnv(gym.Env):
             maneuver = "Right"
         elif self.current_road_maneuver == RoadOption.STRAIGHT:
             maneuver = "Straight"
+        elif self.current_road_maneuver == RoadOption.CHANGELANELEFT:
+            maneuver = "Change Left Lane"
+        elif self.current_road_maneuver == RoadOption.CHANGELANERIGHT:
+            maneuver = "Change Right Lane"
         else:
             maneuver = "INVALID"
 

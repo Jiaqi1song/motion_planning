@@ -12,6 +12,7 @@ parser.add_argument("--no_render", action="store_false", help="If True, render t
 parser.add_argument("--fps", type=int, default=15, help="FPS to render the environment")
 parser.add_argument("--no_record_video", action="store_false", help="If True, record video of the evaluation")
 parser.add_argument("--config", type=str, default="1", help="Config to use (default: 1)")
+parser.add_argument("--map", type=str, default="Town07", help="Map used in the environment (default: Town07)")
 
 args = vars(parser.parse_args())
 config.set_config(args["config"])
@@ -137,7 +138,7 @@ if __name__ == "__main__":
                         encode_state_fn=encode_state_fn, decode_vae_fn=decode_vae_fn,
                         fps=args["fps"], action_smoothing=CONFIG["action_smoothing"],
                         action_space_type='continuous', activate_spectator=True, eval=True,
-                        activate_render=args["no_render"])
+                        activate_render=args["no_render"], map=args["map"])
 
     for wrapper_class_str in CONFIG["wrappers"]:
         wrap_class, wrap_params = parse_wrapper_class(wrapper_class_str)
