@@ -8,8 +8,9 @@ conda create -n carla python=3.7.16
 conda activate carla
 pip install -r requirements.txt
 ```
+Download Carla 0.9.13 from https://github.com/carla-simulator/carla/releases/tag/0.9.13/
 
-Manully install the carla `0.9.13` package with:
+Manually install the carla `0.9.13` package with:
 ```bash
 pip install PythonAPI/carla/dist/carla-0.9.13-cp37-cp37m-win_amd64.whl
 ```
