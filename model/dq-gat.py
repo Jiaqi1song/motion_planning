@@ -68,7 +68,10 @@ class DQGAT(nn.Module):
         super(DQGAT, self).__init__()
         self.cnn_encoder = ResNetEncoder(output_dim=bev_output_dim) 
         self.mlp_encoder = MLPNodeEncoder(input_dim=node_input_dim, output_dim=node_embed_dim)  
-        self.gat_encoder = MultiHeadSelfAttentionGAT(input_dim=bev_output_dim + node_embed_dim, output_dim=256)
+        self.gat_encoder = nn.Sequential(
+            MultiHeadSelfAttentionGAT(input_dim=bev_output_dim + node_embed_dim, output_dim=512),
+            MultiHeadSelfAttentionGAT(input_dim=512, output_dim=256),
+        )
 
     def forward(self, bev_image, node_states):
         """
