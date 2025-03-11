@@ -124,7 +124,8 @@ sensor_transforms = {
     "spectator": carla.Transform(carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
     "dashboard": carla.Transform(carla.Location(x=1.6, z=1.7)),
     "lidar": carla.Transform(carla.Location(x=0.0, z=2.4)),
-    "birdview": carla.Transform(carla.Location(x=90, y=210, z=175), carla.Rotation(pitch=-90))
+    "birdview": carla.Transform(carla.Location(x=90, y=210, z=175), carla.Rotation(pitch=-90)),
+    "bev": carla.Transform(carla.Location(x=0, y=0, z=50), carla.Rotation(pitch=-90))
 }
 
 
@@ -288,7 +289,7 @@ class LaneInvasionSensor(CarlaActorBase):
 class Camera(CarlaActorBase):
     def __init__(self, world, width, height, transform=carla.Transform(),
                  attach_to=None, on_recv_image=None,
-                 camera_type="sensor.camera.rgb", color_converter=carla.ColorConverter.Raw, custom_palette=False):
+                 camera_type="sensor.camera.semantic_segmentation", color_converter=carla.ColorConverter.Raw, custom_palette=True):
         self.on_recv_image = on_recv_image
         self.color_converter = color_converter
 
@@ -333,7 +334,7 @@ class Camera(CarlaActorBase):
                     7: [50, 64, 128],  # Roads
                     8: [255, 255, 255],  # Sidewalks
                     9: [0, 0, 0],  # Vegetation
-                    10: [0, 0, 0],  # Vehicles
+                    10: [255, 0, 0],  # Vehicles
                     11: [0, 0, 0],  # Walls
                     12: [0, 0, 0]  # TrafficSigns
                 }

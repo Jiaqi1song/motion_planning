@@ -160,7 +160,7 @@ class CarlaRouteEnv(gym.Env):
                     'custom_palette': True
                 })
             self.dashcam = Camera(self.world, out_width, out_height,
-                                  transform=sensor_transforms["dashboard"],
+                                  transform=sensor_transforms["bev"],
                                   attach_to=self.vehicle, on_recv_image=lambda e: self._set_observation_image(e),
                                   **seg_settings)
 
@@ -179,6 +179,8 @@ class CarlaRouteEnv(gym.Env):
 
     def reset(self, is_training=False):
         # Create new route
+        self._clear_vehicles()
+        self._spawn_vehicles() 
         self.num_routes_completed = -1
         self.episode_idx += 1
         self.new_route()
@@ -314,7 +316,27 @@ class CarlaRouteEnv(gym.Env):
         # Render to screen
         pygame.display.flip()
 
+    def _clear_vehicles(self):
+        actors = self.world.get_actors().filter("vehicle.*")
+        vehicle_ids = [actor.id for actor in actors if actor.id != self.vehicle.actor.id]
+        self.client.apply_batch([carla.command.DestroyActor(vehicle_id) for vehicle_id in vehicle_ids])
 
+    def _spawn_vehicles(self, num_vehicles=40):
+        blueprints = self.world.get_blueprint_library().filter("vehicle.*")
+        blueprints = [bp for bp in blueprints if int(bp.get_attribute('number_of_wheels')) == 4]
+
+        spawn_points = self.world.get_map().get_spawn_points()
+        np.random.shuffle(spawn_points)
+        num_vehicles = min(num_vehicles, len(spawn_points))
+
+        batch = []
+        for i in range(num_vehicles):
+            blueprint = np.random.choice(blueprints)
+            blueprint.set_attribute('role_name', 'autopilot')
+            batch.append(carla.command.SpawnActor(blueprint, spawn_points[i])
+                        .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
+
+        self.client.apply_batch_sync(batch, True)
 
     def step(self, action):
         if self.closed:

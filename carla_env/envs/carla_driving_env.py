@@ -352,7 +352,7 @@ class CarlaDrivingEnv(gym.Env):
         bev_obs = self._process_bev_image(raw_bev)
         agent_feats = self.get_agent_features()
         observation = {"bev_image": bev_obs, "agent_feats": agent_feats}
-        return self.encode_state_fn(observation)
+        return self.encode_state_fn(**observation)
 
     def render(self, mode="human"):
         if mode == "rgb_array":

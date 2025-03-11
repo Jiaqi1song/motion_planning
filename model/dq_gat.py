@@ -76,20 +76,20 @@ class DQGAT(nn.Module):
         )
         self.token_embedding = nn.Embedding(VocabularyStateType.PAD_TOKEN.vocal_size, node_embed_dim)
 
-    def forward(self, bev_image, node_states):
+    def forward(self, bev_image, agent_feats):
         """
         Inputs:
             - bev_image: (batch_size, 3, 224, 224)      [Semantic BEV Image]
-            - node_states: (batch_size, num_agents, 10) [Motion State Features]
+            - agent_feats: (batch_size, num_agents, 10) [Motion State Features]
         Outputs:
             - ego_node_feature: (batch_size, 256)       [Final feature representing ego-vehicle interactions]
         """
-        batch_size, num_agents, _ = node_states.shape
+        batch_size, num_agents, _ = agent_feats.shape
         
         # Extract the BEV and agent features
-        bev_embedding = self.cnn_encoder(bev_image)                          # (batch_size, 512)
-        # node_features = self.mlp_encoder(self.token_embedding(node_states))  # (batch_size, num_agents, 128)
-        node_features = self.mlp_encoder(node_states)
+        bev_embedding = self.cnn_encoder(bev_image)                            # (batch_size, 512)
+        # node_features = self.mlp_encoder(self.token_embedding(agent_feats))  # (batch_size, num_agents, 128)
+        node_features = self.mlp_encoder(agent_feats)
 
         # Expand bev_embedding to match agent count and concatenate
         bev_expanded = bev_embedding.unsqueeze(1).expand(-1, num_agents, -1)  
