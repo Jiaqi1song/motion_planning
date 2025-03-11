@@ -65,7 +65,7 @@ class MultiHeadSelfAttentionGAT(nn.Module):
         return x_out
     
 class DQGAT(nn.Module):
-    def __init__(self, bev_output_dim=512, node_input_dim=10, node_embed_dim=128):
+    def __init__(self, bev_output_dim=512, node_embed_dim=128):
         super(DQGAT, self).__init__()
         self.cnn_encoder = ResNetEncoder(output_dim=bev_output_dim) 
         self.mlp_encoder = MLPNodeEncoder(input_dim=node_embed_dim, output_dim=node_embed_dim)  
@@ -73,7 +73,7 @@ class DQGAT(nn.Module):
             MultiHeadSelfAttentionGAT(input_dim=bev_output_dim + node_embed_dim, output_dim=512),
             MultiHeadSelfAttentionGAT(input_dim=512, output_dim=256),
         )
-        self.token_embedding = nn.Embedding(VocabularyStateType.PAD_TOKEN.vocal_size, node_input_dim)
+        self.token_embedding = nn.Embedding(VocabularyStateType.PAD_TOKEN.vocal_size, node_embed_dim)
 
     def forward(self, bev_image, node_states):
         """
@@ -86,7 +86,7 @@ class DQGAT(nn.Module):
         batch_size, num_agents, _ = node_states.shape
         
         # Extract the BEV and agent features
-        bev_embedding = self.cnn_encoder(bev_image)    # (batch_size, 512)
+        bev_embedding = self.cnn_encoder(bev_image)                          # (batch_size, 512)
         node_features = self.mlp_encoder(self.token_embedding(node_states))  # (batch_size, num_agents, 128)
 
         # Expand bev_embedding to match agent count and concatenate
