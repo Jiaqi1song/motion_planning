@@ -23,8 +23,9 @@ import carla
 from collections import deque
 import itertools
 
-intersection_routes = itertools.cycle(
-    [(57, 81), (70, 11), (70, 12), (78, 68), (74, 41), (42, 73), (71, 62), (74, 40), (71, 77), (6, 12), (65, 52), (63, 80)])
+# intersection_routes = itertools.cycle(
+#     [(57, 81), (70, 11), (70, 12), (78, 68), (74, 41), (42, 73), (71, 62), (74, 40), (71, 77), (6, 12), (65, 52), (63, 80)])
+intersection_routes = itertools.cycle([(57, 81)])
 eval_routes = itertools.cycle([(48, 21), (0, 72), (28, 83), (61, 39)])
 
 discrete_actions = {
@@ -218,10 +219,10 @@ class CarlaRouteEnv(gym.Env):
 
         # Generate waypoints along the lap
         if not self.eval:
-            if self.episode_idx % 2 == 0 and self.num_routes_completed == -1:
-                spawn_points_list = [self.world.map.get_spawn_points()[index] for index in next(intersection_routes)]
-            else:
-                spawn_points_list = np.random.choice(self.world.map.get_spawn_points(), 2, replace=False)
+            # if self.episode_idx % 2 == 0 and self.num_routes_completed == -1:
+            spawn_points_list = [self.world.map.get_spawn_points()[index] for index in next(intersection_routes)]
+            # else:
+            #     spawn_points_list = np.random.choice(self.world.map.get_spawn_points(), 2, replace=False)
         else:
             spawn_points_list = [self.world.map.get_spawn_points()[index] for index in next(eval_routes)]
         route_length = 1
@@ -321,20 +322,28 @@ class CarlaRouteEnv(gym.Env):
         vehicle_ids = [actor.id for actor in actors if actor.id != self.vehicle.actor.id]
         self.client.apply_batch([carla.command.DestroyActor(vehicle_id) for vehicle_id in vehicle_ids])
 
-    def _spawn_vehicles(self, num_vehicles=40):
+    def _spawn_vehicles(self, num_vehicles=40, random=False):
         blueprints = self.world.get_blueprint_library().filter("vehicle.*")
         blueprints = [bp for bp in blueprints if int(bp.get_attribute('number_of_wheels')) == 4]
 
         spawn_points = self.world.get_map().get_spawn_points()
-        np.random.shuffle(spawn_points)
         num_vehicles = min(num_vehicles, len(spawn_points))
 
-        batch = []
-        for i in range(num_vehicles):
-            blueprint = np.random.choice(blueprints)
-            blueprint.set_attribute('role_name', 'autopilot')
-            batch.append(carla.command.SpawnActor(blueprint, spawn_points[i])
-                        .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
+        if random:
+            np.random.shuffle(spawn_points)
+            batch = []
+            for i in range(num_vehicles):
+                blueprint = np.random.choice(blueprints)
+                blueprint.set_attribute('role_name', 'autopilot')
+                batch.append(carla.command.SpawnActor(blueprint, spawn_points[i])
+                            .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
+        else:
+            batch = []
+            for i in range(num_vehicles):
+                blueprint = blueprints[4]
+                blueprint.set_attribute('role_name', 'autopilot')
+                batch.append(carla.command.SpawnActor(blueprint, spawn_points[i])
+                            .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
 
         self.client.apply_batch_sync(batch, True)
 
