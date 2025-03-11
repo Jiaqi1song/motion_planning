@@ -136,3 +136,7 @@ def create_encode_state_fn(vae, measurements_to_include):
     if not vae:
         decode_vae_state = None
     return create_observation_space(), encode_state, decode_vae_state
+
+def encode_state_dqgat(dqgat, observation):
+    return dqgat(observation["bev_image"], observation["agent_feats"])
+

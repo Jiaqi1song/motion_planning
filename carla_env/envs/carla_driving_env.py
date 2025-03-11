@@ -9,10 +9,10 @@ from gym import spaces
 import cv2
 import pygame
 from pygame.locals import *
-from ...model.agent_state import *
+from model.agent_state import *
 
 def smooth_action(current, target, smoothing_factor):
-    return current * (1 - smoothing_factor) + target * smoothing_factor
+    return current * smoothing_factor + target * (1 - smoothing_factor)
 
 def transform_to_ego_frame(ego_transform, target_location):
     dx = target_location.x - ego_transform.location.x
@@ -58,7 +58,7 @@ class CarlaDrivingEnv(gym.Env):
                  host="127.0.0.1",
                  port=2000,
                  fps=15,
-                 map_name='Town07',
+                 map='Town07',
                  action_space_type="discrete",  # "continuous" or "discrete"
                  reward_fn=None,
                  encode_state_fn=None,
@@ -78,7 +78,7 @@ class CarlaDrivingEnv(gym.Env):
         self.world.apply_settings(settings)
 
         self.fps = fps
-        self.map_name = map_name
+        self.map = map
         self.action_space_type = action_space_type
         self.action_smoothing = action_smoothing
         self.eval = eval
@@ -101,10 +101,11 @@ class CarlaDrivingEnv(gym.Env):
 
         # Define observation space.
         # BEV image: now directly (3, 224, 224) from the segmentation sensor.
-        self.observation_space = spaces.Dict({
-            "bev_image": spaces.Box(low=0, high=255, shape=(3, 224, 224), dtype=np.float32),
-            "agent_feats": spaces.Box(low=-np.inf, high=np.inf, shape=(20, 10), dtype=np.float32)
-        })
+        # self.observation_space = spaces.Dict({
+        #     "bev_image": spaces.Box(low=0, high=255, shape=(3, 224, 224), dtype=np.float32),
+        #     "agent_feats": spaces.Box(low=-np.inf, high=np.inf, shape=(20, 10), dtype=np.float32)
+        # })
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(256,), dtype=np.float32)
 
         # Initialize actors.
         self.vehicle = None
@@ -125,7 +126,7 @@ class CarlaDrivingEnv(gym.Env):
 
         # Spawn ego vehicle.
         blueprint_library = self.world.get_blueprint_library()
-        vehicle_bp = blueprint_library.filter("vehicle.lincoln.mkz2017")[0]
+        vehicle_bp = blueprint_library.filter("vehicle.tesla.model3")[0]
         spawn_points = self.world.get_map().get_spawn_points()
         self.spawn_point = random.choice(spawn_points)
         self.vehicle = self.world.spawn_actor(vehicle_bp, self.spawn_point)
@@ -325,7 +326,7 @@ class CarlaDrivingEnv(gym.Env):
         self.step_count = 0
 
         blueprint_library = self.world.get_blueprint_library()
-        vehicle_bp = blueprint_library.filter("vehicle.lincoln.mkz2017")[0]
+        vehicle_bp = blueprint_library.filter("vehicle.tesla.model3")[0]
         spawn_points = self.world.get_map().get_spawn_points()
         self.spawn_point = random.choice(spawn_points)
         self.vehicle = self.world.spawn_actor(vehicle_bp, self.spawn_point)
@@ -351,7 +352,7 @@ class CarlaDrivingEnv(gym.Env):
         bev_obs = self._process_bev_image(raw_bev)
         agent_feats = self.get_agent_features()
         observation = {"bev_image": bev_obs, "agent_feats": agent_feats}
-        return observation
+        return self.encode_state_fn(observation)
 
     def render(self, mode="human"):
         if mode == "rgb_array":

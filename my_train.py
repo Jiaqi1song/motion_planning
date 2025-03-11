@@ -28,9 +28,10 @@ from stable_baselines3.common.logger import configure
 from carla_env.envs.carla_driving_env import CarlaDrivingEnv
 
 from vae.utils.misc import LSIZE
-from carla_env.state_commons import create_encode_state_fn, load_vae
+from carla_env.state_commons import create_encode_state_fn, load_vae, encode_state_dqgat
 from carla_env.rewards import reward_functions
 from utils import HParamCallback, TensorboardCallback, write_json, parse_wrapper_class
+from model.dq_gat import DQGAT
 
 from config import CONFIG
 
@@ -46,24 +47,24 @@ if CONFIG["algorithm"] not in algorithm_dict:
     raise ValueError("Invalid algorithm name")
 
 AlgorithmRL = algorithm_dict[CONFIG["algorithm"]]
-vae = None
-if CONFIG["vae_model"]:
-    vae = load_vae(f'./vae/log_dir/{CONFIG["vae_model"]}', LSIZE)
-observation_space, encode_state_fn, decode_vae_fn = create_encode_state_fn(vae, CONFIG["state"])
+# vae = None
+# if CONFIG["vae_model"]:
+#     vae = load_vae(f'./vae/log_dir/{CONFIG["vae_model"]}', LSIZE)
+# observation_space, encode_state_fn, decode_vae_fn = create_encode_state_fn(vae, CONFIG["state"])
+dqgat_model = DQGAT()
 
-env = CarlaDrivingEnv(obs_res=CONFIG["obs_res"], host=args["host"], port=args["port"],
+env = CarlaDrivingEnv(host=args["host"], port=args["port"],
                     reward_fn=reward_functions[CONFIG["reward_fn"]],
-                    observation_space=observation_space,
-                    encode_state_fn=encode_state_fn, decode_vae_fn=decode_vae_fn,
+                    encode_state_fn=encode_state_dqgat, 
                     fps=args["fps"], action_smoothing=CONFIG["action_smoothing"],
-                    action_space_type='continuous', activate_spectator=False, activate_render=args["no_render"], map=args["map"])
+                    action_space_type='continuous', activate_render=args["no_render"], map=args["map"])
 
 for wrapper_class_str in CONFIG["wrappers"]:
     wrap_class, wrap_params = parse_wrapper_class(wrapper_class_str)
     env = wrap_class(env, *wrap_params)
 
 if reload_model == "":
-    model = AlgorithmRL('MultiInputPolicy', env, verbose=1, seed=seed, tensorboard_log=log_dir, device='cuda',
+    model = AlgorithmRL('MlpPolicy', env, verbose=1, seed=seed, tensorboard_log=log_dir, device='cuda',
                         **CONFIG["algorithm_params"])
     model_suffix = f"{int(time.time())}_id{args['config']}"
 else:
