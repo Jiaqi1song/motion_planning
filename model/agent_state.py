@@ -1,5 +1,8 @@
-import numpy as np
+from __future__ import annotations
+
 from enum import Enum
+from typing import Tuple
+import numpy as np
 
 class TokenType(Enum):
     """
@@ -142,6 +145,186 @@ LENGTH_DIM = NpSequenceArray.length_dim
 CLASS_TYPE_DIM = NpSequenceArray.class_type_dim
 TOKEN_TYPE_DIM = NpSequenceArray.token_type_dim
 
+class VocabularyStateType(Enum):
+    """Enum of classification types for TrackedObject with integer ranges."""
+
+    X = (0, 199), 'x', 0          # 200, 0.2, -100, 100
+    Y = (200, 399), 'y', 1        # 200, 0.2, -100, 100
+    DIST = (400, 599), "dist", 2  # 200, 0.2, -100, 100
+    YAW = (600, 699), 'yaw', 3    # 100, np.pi/100, -np.pi, np.pi
+    VX = (700, 799), 'vx', 4      # 100, 0.25, -25, 25
+    VY = (800, 899), 'vy', 5      # 100, 0.25, -25, 25
+    AX = (900, 999), 'ax', 6      # 100, 0.25, -25, 25
+    AY = (1000, 1099), 'ay', 7    # 100, 0.25, -25, 25
+    WIDTH = (1100, 1114), 'width', 8 # 15
+    LENGTH = (1115, 1144), 'length', 9 #30
+    PAD_TOKEN = (1145, 1145), 'pad_token', 10
+
+    @property
+    def num_agent_attributes(self) -> str:
+        return 3
+
+    @property
+    def vocal_size(self) -> int:
+        return self.PAD_TOKEN.end+1
+
+    @property
+    def x_range(self) -> Tuple[float, float]:
+        return (-100, 100)
+
+    @property
+    def y_range(self) -> Tuple[float, float]:
+        return (-100, 100)
+
+    @property
+    def dist_range(self) -> Tuple[float, float]:
+        return (-100, 100)
+    
+    @property
+    def yaw_range(self) -> Tuple[float, float]:
+        return (-np.pi, np.pi)
+
+    @property
+    def vx_range(self) -> Tuple[float, float]:
+        return (-25, 25)
+
+    @property
+    def vy_range(self) -> Tuple[float, float]:
+        return (-25, 25)
+    
+    @property
+    def ax_range(self) -> Tuple[float, float]:
+        return (-25, 25)
+
+    @property
+    def ay_range(self) -> Tuple[float, float]:
+        return (-25, 25)
+
+    @property
+    def width_range(self) -> Tuple[float, float]:
+        return (0, 7)
+
+    @property
+    def length_range(self) -> Tuple[float, float]:
+        return (0, 15)
+
+    @property
+    def x_step(self) -> float:
+        return (self.x_range[1] - self.x_range[0])/self.nx
+
+    @property
+    def y_step(self) -> float:
+        return (self.y_range[1] - self.y_range[0])/self.ny
+    
+    @property
+    def dist_step(self) -> float:
+        return (self.dist_range[1] - self.dist_range[0])/self.nd
+
+    @property
+    def yaw_step(self) -> float:
+        return (self.yaw_range[1] - self.yaw_range[0])/self.nyaw
+
+    @property
+    def vx_step(self) -> float:
+        return (self.vx_range[1] - self.vx_range[0])/self.nvx
+
+    @property
+    def vy_step(self) -> float:
+        return (self.vy_range[1] - self.vy_range[0])/self.nvy
+    
+    @property
+    def ax_step(self) -> float:
+        return (self.ax_range[1] - self.ax_range[0])/self.nax
+
+    @property
+    def ay_step(self) -> float:
+        return (self.ay_range[1] - self.ay_range[0])/self.nay
+
+    @property
+    def width_step(self) -> float:
+        return (self.width_range[1] - self.width_range[0])/self.nw
+
+    @property
+    def length_step(self) -> float:
+        return (self.length_range[1] - self.length_range[0])/self.nl
+
+    @property
+    def nx(self) -> int:
+        return self.X.end - self.X.start + 1
+
+    @property
+    def ny(self) -> int:
+        return self.Y.end - self.Y.start + 1
+    
+    @property
+    def nd(self) -> int:
+        return self.DIST.end - self.DIST.start + 1
+
+    @property
+    def nyaw(self) -> int:
+        return self.YAW.end - self.YAW.start + 1
+
+    @property
+    def nvx(self) -> int:
+        return self.VX.end - self.VX.start + 1
+
+    @property
+    def nvy(self) -> int:
+        return self.VY.end - self.VY.start + 1
+
+    @property
+    def nax(self) -> int:
+        return self.AX.end - self.AX.start + 1
+
+    @property
+    def nay(self) -> int:
+        return self.AY.end - self.AY.start + 1
+    
+    @property
+    def nw(self) -> int:
+        return self.WIDTH.end - self.WIDTH.start + 1
+
+    @property
+    def nl(self) -> int:
+        return self.LENGTH.end - self.LENGTH.start + 1
+
+    @property
+    def start(self) -> int:
+        """Get the start value of the range."""
+        return self.value[0][0]
+
+    @property
+    def end(self) -> int:
+        """Get the end value of the range."""
+        return self.value[0][1]
+
+    @property
+    def index(self) -> int:
+        """Get the index of the range."""
+        return self.value[2]
+
+    @classmethod
+    def index_to_state(cls, index: int) -> VocabularyStateType:
+        """Convert an index to its corresponding VocabularyStateType."""
+        for state in cls:
+            if state.index == index:
+                return state
+        raise ValueError(f"No VocabularyStateType found for index {index}")
+
+    def __contains__(self, value) -> bool:
+        """Check if a number is within the range of this enum member."""
+        if isinstance(value, VocabularyStateType):
+            return self.start <= value.start <= self.end
+        elif isinstance(value, int):
+            return self.start <= value <= self.end
+        else:
+            raise TypeError("Unsupported type for containment check")
+
+    def get_sampling_mask(self):
+        sampling_mask = np.zeros(self.vocal_size)
+        sampling_mask[self.start:self.end+1] = 1
+        return sampling_mask > 0
+
 def get_agent_array():
     """
     Generate an array representing an agent's state in a specific frame.
@@ -205,3 +388,37 @@ def process_data(max_seq_len=50):
         # TODO: handle special case and out of valid range case
 
     return output
+
+X_START, X_END, X_RANGE, X_STEP = VocabularyStateType.X.start, VocabularyStateType.X.end, VocabularyStateType.X.x_range, VocabularyStateType.X.x_step
+Y_START, Y_END, Y_RANGE, Y_STEP = VocabularyStateType.Y.start, VocabularyStateType.Y.end, VocabularyStateType.Y.y_range, VocabularyStateType.Y.y_step
+DIST_START, DIST_END, DIST_RANGE, DIST_STEP = VocabularyStateType.DIST.start, VocabularyStateType.DIST.end, VocabularyStateType.DIST.y_range, VocabularyStateType.DIST.y_step
+YAW_START, YAW_END, YAW_RANGE, YAW_STEP = VocabularyStateType.YAW.start, VocabularyStateType.YAW.end, VocabularyStateType.YAW.heading_range, VocabularyStateType.YAW.heading_step
+WIDTH_START, WIDTH_END, WIDTH_RANGE, WIDTH_STEP = VocabularyStateType.WIDTH.start, VocabularyStateType.WIDTH.end, VocabularyStateType.WIDTH.width_range, VocabularyStateType.WIDTH.width_step
+LENGTH_START, LENGTH_END, LENGTH_RANGE, LENGTH_STEP = VocabularyStateType.LENGTH.start, VocabularyStateType.LENGTH.end, VocabularyStateType.LENGTH.length_range, VocabularyStateType.LENGTH.length_step
+VX_START, VX_END, VX_RANGE, VX_STEP = VocabularyStateType.VX.start, VocabularyStateType.VX.end, VocabularyStateType.VX.x_range, VocabularyStateType.VX.x_step
+VY_START, VY_END, VY_RANGE, VY_STEP = VocabularyStateType.VY.start, VocabularyStateType.VY.end, VocabularyStateType.VY.y_range, VocabularyStateType.VY.y_step
+AX_START, AX_END, AX_RANGE, AX_STEP = VocabularyStateType.AX.start, VocabularyStateType.AX.end, VocabularyStateType.AX.x_range, VocabularyStateType.AX.x_step
+AY_START, AY_END, AY_RANGE, AY_STEP = VocabularyStateType.AY.start, VocabularyStateType.AY.end, VocabularyStateType.AY.y_range, VocabularyStateType.AY.y_step
+
+def tokenize_data(data):
+    """
+    Convert data points into tokens based on specified ranges and steps.
+    
+    Args:
+        data (np.ndarray): The data array to be tokenized.
+    
+    Returns:
+        np.ndarray: The data array with tokenized values.
+    """
+    def calculate_token(value, value_range, start, step):
+        # Clamping the value within the range and calculating the token
+        value = np.maximum(value_range[0], np.minimum(value_range[1], value))
+        return start + int(round((value - value_range[0]) / step))
+    
+    # Tokenizing data only for specific token types
+    x, y = data[X_DIM], data[Y_DIM]
+    x_token = calculate_token(x, X_RANGE, X_START, X_STEP)
+    y_token = calculate_token(y, Y_RANGE, Y_START, Y_STEP)
+    
+    # TODO tokenized data. If it is not an agent, put padding token
+    return data
