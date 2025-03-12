@@ -111,19 +111,11 @@ class CarlaDrivingEnv(gym.Env):
 
         # Define observation space.
         # BEV image: now directly (3, 224, 224) from the segmentation sensor.
-        # self.observation_space = spaces.Dict({
-        #     "bev_image": spaces.Box(low=0, high=255, shape=(3, 224, 224), dtype=np.float32),
-        #     "agent_feats": spaces.Box(low=-np.inf, high=np.inf, shape=(20, 10), dtype=np.float32)
-        # })
-        def create_observation_space():
-            observation_space = {}
-            observation_space['bev_image'] = spaces.Box(low=0, high=255, shape=(3, 224, 224), dtype=np.float32)
-            observation_space['agent_feats'] = spaces.Box(low=-np.inf, high=np.inf, shape=(20, 12), dtype=np.float32)
-
-            return spaces.Dict(observation_space)
-        
-        self.observation_space = create_observation_space()
-
+        self.observation_space = spaces.Dict({
+            "bev_image": spaces.Box(low=0, high=255, shape=(3, 224, 224), dtype=np.float32),
+            "agent_feats": spaces.Box(low=-np.inf, high=np.inf, shape=(20, 12), dtype=np.float32)
+        })
+    
         # Initialize actors.
         self.vehicle = None
         self.collision_sensor = None

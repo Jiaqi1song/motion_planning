@@ -65,16 +65,12 @@ for wrapper_class_str in CONFIG["wrappers"]:
     env = wrap_class(env, *wrap_params)
 
 if reload_model == "":
-    model = AlgorithmRL('MultiInputPolicy', env, verbose=1, seed=seed, tensorboard_log=log_dir, device='cuda',
+    model = AlgorithmRL(CustomActorCriticPolicy, env, verbose=1, seed=seed, tensorboard_log=log_dir, device='cuda',
                         **CONFIG["algorithm_params"])
-    model.policy.features_extractor = CustomDictFeatureExtractor
     model_suffix = f"{int(time.time())}_id{args['config']}"
 else:
     model = AlgorithmRL.load(reload_model, env=env, device='cuda', seed=seed, **CONFIG["algorithm_params"])
     model_suffix = f"{reload_model.split('/')[-2].split('_')[-1]}_finetuning"
-
-print(model.policy)
-exit()
 
 
 model_name = f'{model.__class__.__name__}_{model_suffix}'
