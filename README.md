@@ -98,3 +98,7 @@ To collect data from CARLA automatically using a RL agent in early stages, run:
 python carla_env/envs/collect_data_rl_env.py
 ```
 
+### Train our model with DQ-GAT:
+```bash
+python my_train.py --config 1 --total_timesteps 1000000 --map Town02
+```

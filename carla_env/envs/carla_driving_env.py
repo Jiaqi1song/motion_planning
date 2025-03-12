@@ -158,6 +158,7 @@ class CarlaDrivingEnv(gym.Env):
             camera_type="sensor.camera.rgb",
             custom_palette= False
         )
+        self.reset()
 
     def default_reward_fn(self, env):
         # Default: -50 if collision; else speed (km/h)/40, capped at 1.
@@ -320,8 +321,6 @@ class CarlaDrivingEnv(gym.Env):
         For discrete actions, action is an index mapping to [steer, throttle] in discrete_actions.
         Action smoothing is applied.
         """
-        if self.episode_ended:
-            return self.reset()
 
         if action is not None:
             # Create new route on route completion
@@ -453,6 +452,7 @@ class CarlaDrivingEnv(gym.Env):
         self.observation = self.observation_buffer = None  # Last received observation
         self.viewer_image = self.viewer_image_buffer = None  # Last received image to show in the viewer
         self.lidar_data = self.lidar_data_buffer = None
+        self.episode_ended = False 
         self.step_count = 0
 
         # Init metrics
@@ -462,9 +462,15 @@ class CarlaDrivingEnv(gym.Env):
         self.center_lane_deviation = 0.0
         self.speed_accum = 0.0
         self.routes_completed = 0.0
+        time.sleep(0.2)
         self.world.tick()
         time.sleep(0.2)
-        observation = self.step(None)[0]
+        self.observation = self._get_observation()
+        agent_feats = self.get_agent_features()
+        observation = {
+            "bev_image": torch.from_numpy(self.observation), 
+            "agent_feats": torch.from_numpy(agent_feats)
+        }
         return observation
 
     def render(self, mode="human"):
@@ -567,27 +573,33 @@ class CarlaDrivingEnv(gym.Env):
         vehicle_ids = [actor.id for actor in actors if actor.id != self.vehicle.actor.id]
         self.client.apply_batch([carla.command.DestroyActor(vehicle_id) for vehicle_id in vehicle_ids])
 
-    def _spawn_vehicles(self, num_vehicles=40, random=False):
+    def _spawn_vehicles(self, num_vehicles=20, random_flag=True):
         blueprints = self.world.get_blueprint_library().filter("vehicle.*")
         blueprints = [bp for bp in blueprints if int(bp.get_attribute('number_of_wheels')) == 4]
 
         spawn_points = self.world.get_map().get_spawn_points()
         num_vehicles = min(num_vehicles, len(spawn_points))
         batch = []
-
-        if random:
+        
+        # Shuffle spawn points to ensure uniqueness.
+        available_spawn_points = list(spawn_points)
+        random.shuffle(available_spawn_points)
+        
+        if random_flag:
             for i in range(num_vehicles):
                 blueprint = np.random.choice(blueprints)
                 blueprint.set_attribute('role_name', 'autopilot')
-                batch.append(carla.command.SpawnActor(blueprint, np.random.choice(spawn_points))
+                # Use unique spawn points by popping from the shuffled list.
+                spawn_point = available_spawn_points.pop(0)
+                batch.append(carla.command.SpawnActor(blueprint, spawn_point)
                             .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
         else:
             for i in range(num_vehicles):
                 blueprint = blueprints[4]
                 blueprint.set_attribute('role_name', 'autopilot')
-                batch.append(carla.command.SpawnActor(blueprint, spawn_points[i])
+                batch.append(carla.command.SpawnActor(blueprint, available_spawn_points[i])
                             .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
-
+        
         self.client.apply_batch_sync(batch, True)
     
     def new_route(self):
