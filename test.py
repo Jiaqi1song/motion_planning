@@ -31,9 +31,6 @@ class CustomNetwork(nn.Module):
         self.latent_dim_pi = last_layer_dim_pi
         self.latent_dim_vf = last_layer_dim_vf
         
-        # DQ-GAT
-        self.DQGAT = DQGAT()
-
         # Policy network
         self.policy_net = nn.Sequential(
             nn.Linear(feature_dim, last_layer_dim_pi), nn.ReLU()
@@ -43,12 +40,11 @@ class CustomNetwork(nn.Module):
             nn.Linear(feature_dim, last_layer_dim_vf), nn.ReLU()
         )
 
-    def forward(self, obs: Dict) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         :return: (th.Tensor, th.Tensor) latent_policy, latent_value of the specified network.
             If all layers are shared, then ``latent_policy == latent_value``
         """
-        features = self.DQGAT.forward(obs["bev"], obs["agent"])
         return self.forward_actor(features), self.forward_critic(features)
 
     def forward_actor(self, features: torch.Tensor) -> torch.Tensor:
@@ -57,11 +53,19 @@ class CustomNetwork(nn.Module):
     def forward_critic(self, features: torch.Tensor) -> torch.Tensor:
         return self.value_net(features)
 
+class CustomDictFeatureExtractor(BaseFeaturesExtractor):
+    def __init__(self, observation_space: spaces.Dict):
+        super().__init__(observation_space, features_dim=1)
+        # DQ-GAT
+        self.DQGAT = DQGAT()
 
+    def forward(self, observations: dict) -> torch.Tensor:
+        return self.DQGAT(observations['bev'], observations['agent'])
+    
 class CustomActorCriticPolicy(ActorCriticPolicy):
     def __init__(
         self,
-        observation_space: spaces.Space,
+        observation_space: spaces.Dict,
         action_space: spaces.Space,
         lr_schedule: Callable[[float], float],
         *args,
@@ -73,10 +77,11 @@ class CustomActorCriticPolicy(ActorCriticPolicy):
             observation_space,
             action_space,
             lr_schedule,
-            # Pass remaining arguments to base class
+            features_extractor_class=CustomDictFeatureExtractor,
             *args,
             **kwargs,
         )
+        self.share_features_extractor = False
 
     def _build_mlp_extractor(self) -> None:
         self.mlp_extractor = CustomNetwork(feature_dim=256)

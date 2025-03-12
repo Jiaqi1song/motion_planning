@@ -115,7 +115,14 @@ class CarlaDrivingEnv(gym.Env):
         #     "bev_image": spaces.Box(low=0, high=255, shape=(3, 224, 224), dtype=np.float32),
         #     "agent_feats": spaces.Box(low=-np.inf, high=np.inf, shape=(20, 10), dtype=np.float32)
         # })
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(256,), dtype=np.float32)
+        def create_observation_space():
+            observation_space = {}
+            observation_space['bev_image'] = spaces.Box(low=0, high=255, shape=(3, 224, 224), dtype=np.float32)
+            observation_space['agent_feats'] = spaces.Box(low=-np.inf, high=np.inf, shape=(20, 12), dtype=np.float32)
+
+            return spaces.Dict(observation_space)
+        
+        self.observation_space = create_observation_space()
 
         # Initialize actors.
         self.vehicle = None
@@ -131,7 +138,7 @@ class CarlaDrivingEnv(gym.Env):
         if self.activate_render:
             pygame.init()
             pygame.font.init()
-            width, height = 720, 720
+            width, height = 900, 900
             self.display = pygame.display.set_mode((width, height), pygame.HWSURFACE | pygame.DOUBLEBUF)
             self.clock = pygame.time.Clock()
             self.hud = HUD(width, height)
@@ -144,10 +151,6 @@ class CarlaDrivingEnv(gym.Env):
                                    on_collision_fn=lambda e: self._on_collision(e),
                                    on_invasion_fn=lambda e: self._on_invasion(e))
 
-        self.camera = Camera(self.world, width, height,
-            transform=sensor_transforms["spectator"],
-            attach_to=self.vehicle, on_recv_image=lambda e: self._set_viewer_image(e),
-            )
         # Attach semantic segmentation BEV camera.
         # We directly set the image size to 224x224.
         self.bev_camera = Camera(
@@ -156,6 +159,12 @@ class CarlaDrivingEnv(gym.Env):
             attach_to=self.vehicle, on_recv_image=lambda e: self._set_observation_image(e),
             camera_type="sensor.camera.semantic_segmentation",
             custom_palette= True
+        )
+        self.camera = Camera(self.world, width, height,
+            transform=sensor_transforms["spectator"],
+            attach_to=self.vehicle, on_recv_image=lambda e: self._set_viewer_image(e),
+            camera_type="sensor.camera.rgb",
+            custom_palette= False
         )
 
     def default_reward_fn(self, env):
@@ -501,6 +510,8 @@ class CarlaDrivingEnv(gym.Env):
             self.collision_sensor.destroy()
         if self.bev_camera is not None:
             self.bev_camera.destroy()
+        if self.camera is not None:
+            self.camera.destroy()
         pygame.quit()
         self.world.apply_settings(carla.WorldSettings())
     

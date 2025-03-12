@@ -31,7 +31,7 @@ from vae.utils.misc import LSIZE
 from carla_env.state_commons import create_encode_state_fn, load_vae, encode_state_dqgat
 from carla_env.rewards import reward_functions
 from utils import HParamCallback, TensorboardCallback, write_json, parse_wrapper_class
-from model.dq_gat import DQGAT, CustomActorCriticPolicy
+from model.dq_gat import *
 
 from config import CONFIG
 
@@ -63,14 +63,19 @@ env = CarlaDrivingEnv(host=args["host"], port=args["port"],
 for wrapper_class_str in CONFIG["wrappers"]:
     wrap_class, wrap_params = parse_wrapper_class(wrapper_class_str)
     env = wrap_class(env, *wrap_params)
-print(CustomActorCriticPolicy)
+
 if reload_model == "":
-    model = AlgorithmRL('MlpPolicy', env, verbose=1, seed=seed, tensorboard_log=log_dir, device='cuda',
+    model = AlgorithmRL('MultiInputPolicy', env, verbose=1, seed=seed, tensorboard_log=log_dir, device='cuda',
                         **CONFIG["algorithm_params"])
+    model.policy.features_extractor = CustomDictFeatureExtractor
     model_suffix = f"{int(time.time())}_id{args['config']}"
 else:
     model = AlgorithmRL.load(reload_model, env=env, device='cuda', seed=seed, **CONFIG["algorithm_params"])
     model_suffix = f"{reload_model.split('/')[-2].split('_')[-1]}_finetuning"
+
+print(model.policy)
+exit()
+
 
 model_name = f'{model.__class__.__name__}_{model_suffix}'
 
