@@ -31,7 +31,7 @@ from vae.utils.misc import LSIZE
 from carla_env.state_commons import create_encode_state_fn, load_vae, encode_state_dqgat
 from carla_env.rewards import reward_functions
 from utils import HParamCallback, TensorboardCallback, write_json, parse_wrapper_class
-from model.dq_gat import DQGAT
+from model.dq_gat import DQGAT, CustomActorCriticPolicy
 
 from config import CONFIG
 
@@ -52,17 +52,18 @@ AlgorithmRL = algorithm_dict[CONFIG["algorithm"]]
 #     vae = load_vae(f'./vae/log_dir/{CONFIG["vae_model"]}', LSIZE)
 # observation_space, encode_state_fn, decode_vae_fn = create_encode_state_fn(vae, CONFIG["state"])
 dqgat_model = DQGAT()
+encode_state_fn = encode_state_dqgat(dqgat_model)
 
 env = CarlaDrivingEnv(host=args["host"], port=args["port"],
                     reward_fn=reward_functions[CONFIG["reward_fn"]],
-                    encode_state_fn=encode_state_dqgat, 
+                    encode_state_fn=encode_state_fn, 
                     fps=args["fps"], action_smoothing=CONFIG["action_smoothing"],
                     action_space_type='continuous', activate_render=args["no_render"], map=args["map"])
 
 for wrapper_class_str in CONFIG["wrappers"]:
     wrap_class, wrap_params = parse_wrapper_class(wrapper_class_str)
     env = wrap_class(env, *wrap_params)
-
+print(CustomActorCriticPolicy)
 if reload_model == "":
     model = AlgorithmRL('MlpPolicy', env, verbose=1, seed=seed, tensorboard_log=log_dir, device='cuda',
                         **CONFIG["algorithm_params"])

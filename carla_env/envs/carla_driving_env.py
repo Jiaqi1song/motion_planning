@@ -10,6 +10,12 @@ import cv2
 import pygame
 from pygame.locals import *
 from model.agent_state import *
+from carla_env.wrappers import *
+from carla_env.tools.hud import HUD
+import itertools
+from carla_env.navigation.planner import RoadOption, compute_route_waypoints
+from collections import deque
+import torch
 
 def smooth_action(current, target, smoothing_factor):
     return current * smoothing_factor + target * (1 - smoothing_factor)
@@ -29,7 +35,8 @@ discrete_actions = {
     2: [1.0, 1.0],
     3: [0.0, 0.0],  # braking / stopping
 }
-
+intersection_routes = itertools.cycle([(57, 81)])
+eval_routes = itertools.cycle([(48, 21), (0, 72), (28, 83), (61, 39)])
 class CarlaDrivingEnv(gym.Env):
     """
     Gym environment for autonomous driving in CARLA designed for DQ-GAT.
@@ -71,16 +78,19 @@ class CarlaDrivingEnv(gym.Env):
         # Connect to CARLA and set synchronous mode.
         self.client = carla.Client(host, port)
         self.client.set_timeout(10.0)
-        self.world = self.client.get_world()
+        self.world = World(self.client, map)
         settings = self.world.get_settings()
         settings.fixed_delta_seconds = 1.0 / fps
         settings.synchronous_mode = True
         self.world.apply_settings(settings)
+        self.client.reload_world(False)
 
         self.fps = fps
         self.map = map
         self.action_space_type = action_space_type
         self.action_smoothing = action_smoothing
+        self.episode_idx = -2
+        self.max_distance = 3000
         self.eval = eval
         self.activate_render = activate_render
 
@@ -121,34 +131,32 @@ class CarlaDrivingEnv(gym.Env):
         if self.activate_render:
             pygame.init()
             pygame.font.init()
-            self.display = pygame.display.set_mode((224, 224), pygame.HWSURFACE | pygame.DOUBLEBUF)
+            width, height = 720, 720
+            self.display = pygame.display.set_mode((width, height), pygame.HWSURFACE | pygame.DOUBLEBUF)
             self.clock = pygame.time.Clock()
+            self.hud = HUD(width, height)
+            self.hud.set_vehicle(self.vehicle)
+            self.world.on_tick(self.hud.on_world_tick)
 
         # Spawn ego vehicle.
-        blueprint_library = self.world.get_blueprint_library()
-        vehicle_bp = blueprint_library.filter("vehicle.tesla.model3")[0]
-        spawn_points = self.world.get_map().get_spawn_points()
-        self.spawn_point = random.choice(spawn_points)
-        self.vehicle = self.world.spawn_actor(vehicle_bp, self.spawn_point)
 
-        # Attach collision sensor.
-        collision_bp = blueprint_library.find("sensor.other.collision")
-        self.collision_sensor = self.world.spawn_actor(collision_bp, carla.Transform(), attach_to=self.vehicle)
-        self.collision_sensor.listen(lambda event: self._on_collision(event))
+        self.vehicle = Vehicle(self.world, self.world.map.get_spawn_points()[0],
+                                   on_collision_fn=lambda e: self._on_collision(e),
+                                   on_invasion_fn=lambda e: self._on_invasion(e))
 
+        self.camera = Camera(self.world, width, height,
+            transform=sensor_transforms["spectator"],
+            attach_to=self.vehicle, on_recv_image=lambda e: self._set_viewer_image(e),
+            )
         # Attach semantic segmentation BEV camera.
         # We directly set the image size to 224x224.
-        camera_bp = blueprint_library.find("sensor.camera.semantic_segmentation")
-        camera_bp.set_attribute("image_size_x", "224")
-        camera_bp.set_attribute("image_size_y", "224")
-        camera_bp.set_attribute("fov", "90")
-        # Optionally, you could set a custom palette:
-        # camera_bp.set_attribute("custom_palette", "True")
-        camera_transform = carla.Transform(carla.Location(x=0, y=0, z=50),
-                                           carla.Rotation(pitch=-90))
-        self.bev_camera = self.world.spawn_actor(camera_bp, camera_transform, attach_to=self.vehicle)
-        self.bev_image = None
-        self.bev_camera.listen(lambda image: self._on_bev_image(image))
+        self.bev_camera = Camera(
+            self.world, 224, 224,
+            transform=sensor_transforms["dashboard"],
+            attach_to=self.vehicle, on_recv_image=lambda e: self._set_observation_image(e),
+            camera_type="sensor.camera.semantic_segmentation",
+            custom_palette= True
+        )
 
     def default_reward_fn(self, env):
         # Default: -50 if collision; else speed (km/h)/40, capped at 1.
@@ -173,6 +181,7 @@ class CarlaDrivingEnv(gym.Env):
         from HWC to CHW and cast to float32.
         """
         chw = np.transpose(image, (2, 0, 1))
+        chw = np.expand_dims(chw, axis=0)
         return chw.astype(np.float32)
 
     def get_agent_features(self):
@@ -254,6 +263,7 @@ class CarlaDrivingEnv(gym.Env):
             distances = features[:, DIST_DIM]
             idx = np.argsort(distances)[:max_agents]
             features = features[idx]
+        features = np.expand_dims(features, axis=0)
         return features
 
 
@@ -267,40 +277,107 @@ class CarlaDrivingEnv(gym.Env):
         if self.episode_ended:
             return self.reset()
 
-        if self.action_space_type == "continuous":
-            target_steer, target_throttle = action
-        elif self.action_space_type == "discrete":
-            target_steer, target_throttle = discrete_actions[action]
-        else:
-            raise ValueError("Unsupported action_space_type.")
+        if action is not None:
+            # Create new route on route completion
+            if self.current_waypoint_index >= len(self.route_waypoints) - 1:
+                if not self.eval:
+                    self.new_route()
+                else:
+                    self.success_state = True
 
-        current_control = self.vehicle.get_control()
-        new_steer = smooth_action(current_control.steer, target_steer, self.action_smoothing)
-        new_throttle = smooth_action(current_control.throttle, target_throttle, self.action_smoothing)
-        new_brake = 0.0
-        if target_throttle == 0 and self.vehicle.get_speed() * 3.6 > 5:
-            new_brake = 0.5
+            if self.action_space_type == "continuous":
+                steer, throttle = [float(a) for a in action]
+            elif self.action_space_type == "discrete":
+                steer, throttle = discrete_actions[action]
 
-        control = carla.VehicleControl()
-        control.steer = new_steer
-        control.throttle = new_throttle
-        control.brake = new_brake
-        self.vehicle.apply_control(control)
-
+            self.vehicle.control.steer = smooth_action(self.vehicle.control.steer, steer, self.action_smoothing)
+            self.vehicle.control.throttle = smooth_action(self.vehicle.control.throttle, throttle,
+                                                          self.action_smoothing)
+        # Tick game
         self.world.tick()
         self.step_count += 1
-
-        timeout = time.time() + 1.0
-        while self.bev_image is None and time.time() < timeout:
-            time.sleep(0.01)
-        raw_bev = self.bev_image if self.bev_image is not None else np.zeros((224, 224, 3), dtype=np.uint8)
-        bev_obs = self._process_bev_image(raw_bev)
+        self.observation = self._get_observation()
+        self.viewer_image = self._get_viewer_image()
+        # timeout = time.time() + 1.0
+        # while self.bev_image is None and time.time() < timeout:
+        #     time.sleep(0.01)
+        # raw_bev = self.bev_image if self.bev_image is not None else np.zeros((224, 224, 3), dtype=np.uint8)
+        # bev_obs = self._process_bev_image(raw_bev)
         agent_feats = self.get_agent_features()
-        observation = {"bev_image": bev_obs, "agent_feats": agent_feats}
+        observation = {
+            "bev_image": torch.from_numpy(self.observation), 
+            "agent_feats": torch.from_numpy(agent_feats)
+        }
 
-        reward = self.reward_fn(self)
-        done = self.episode_ended or (self.step_count >= self.max_episode_steps)
-        info = {"step": self.step_count, "speed": self.vehicle.get_speed() * 3.6}
+
+        # Get vehicle transform
+        transform = self.vehicle.get_transform()
+
+        # Keep track of closest waypoint on the route
+        self.prev_waypoint_index = self.current_waypoint_index
+        waypoint_index = self.current_waypoint_index
+        for _ in range(len(self.route_waypoints)):
+            # Check if we passed the next waypoint along the route
+            next_waypoint_index = waypoint_index + 1
+            wp, _ = self.route_waypoints[next_waypoint_index % len(self.route_waypoints)]
+            dot = np.dot(vector(wp.transform.get_forward_vector())[:2],
+                         vector(transform.location - wp.transform.location)[:2])
+            if dot > 0.0:  # Did we pass the waypoint?
+                waypoint_index += 1  # Go to next waypoint
+            else:
+                break
+        self.current_waypoint_index = waypoint_index
+
+        # Check for route completion
+        if self.current_waypoint_index < len(self.route_waypoints) - 1:
+            self.next_waypoint, self.next_road_maneuver = self.route_waypoints[
+                (self.current_waypoint_index + 1) % len(self.route_waypoints)]
+
+        self.current_waypoint, self.current_road_maneuver = self.route_waypoints[
+            self.current_waypoint_index % len(self.route_waypoints)]
+        self.routes_completed = self.num_routes_completed + (self.current_waypoint_index + 1) / len(
+            self.route_waypoints)
+
+        # Calculate deviation from center of the lane
+        self.distance_from_center = distance_to_line(vector(self.current_waypoint.transform.location),
+                                                     vector(self.next_waypoint.transform.location),
+                                                     vector(transform.location))
+        self.center_lane_deviation += self.distance_from_center
+
+        # Calculate distance traveled
+        if action is not None:
+            self.distance_traveled += self.previous_location.distance(transform.location)
+        self.previous_location = transform.location
+
+        # Accumulate speed
+        self.speed_accum += self.vehicle.get_speed()
+        # Terminal on max distance
+        if self.distance_traveled >= self.max_distance and not self.eval:
+            self.success_state = True
+
+        self.distance_from_center_history.append(self.distance_from_center)
+
+        # Call external reward fn
+        self.last_reward = self.reward_fn(self)
+        self.total_reward += self.last_reward
+
+        if self.activate_render:
+            pygame.event.pump()
+            if pygame.key.get_pressed()[K_ESCAPE]:
+                self.close()
+                self.terminal_state = True
+            self.render()
+
+
+        info = {
+            "closed": self.closed,
+            'total_reward': self.total_reward,
+            'routes_completed': self.routes_completed,
+            'total_distance': self.distance_traveled,
+            'avg_center_dev': (self.center_lane_deviation / self.step_count),
+            'avg_speed': (self.speed_accum / self.step_count),
+            'mean_reward': (self.total_reward / self.step_count)
+        }
 
         if self.activate_render:
             for event in pygame.event.get():
@@ -310,64 +387,112 @@ class CarlaDrivingEnv(gym.Env):
             self.render(mode="human")
             self.clock.tick(self.fps)
 
-        encoded_obs = self.encode_state_fn(observation)
-        return encoded_obs, reward, done, info
+        encoded_obs = self.encode_state_fn(observation).detach().cpu().numpy()
+        return observation, self.last_reward, self.terminal_state or self.success_state, info
 
     def reset(self):
-        if self.vehicle is not None:
-            self.vehicle.destroy()
-        if self.collision_sensor is not None:
-            self.collision_sensor.destroy()
-        if self.bev_camera is not None:
-            self.bev_camera.destroy()
+        # Create new route
+        self._clear_vehicles()
+        self._spawn_vehicles() 
+        self.num_routes_completed = -1
+        self.episode_idx += 1
+        self.new_route()
 
-        self.collision_history = []
-        self.episode_ended = False
+        # Two different variables to differ between success episode and fail episode
+        self.terminal_state = False  # Set to True when we want to end episode
+        self.success_state = False  # Set to True when we want to end episode.
+
+        self.closed = False  # Set to True when ESC is pressed
+        self.extra_info = []  # List of extra info shown on the HUD
+        self.observation = self.observation_buffer = None  # Last received observation
+        self.viewer_image = self.viewer_image_buffer = None  # Last received image to show in the viewer
+        self.lidar_data = self.lidar_data_buffer = None
         self.step_count = 0
 
-        blueprint_library = self.world.get_blueprint_library()
-        vehicle_bp = blueprint_library.filter("vehicle.tesla.model3")[0]
-        spawn_points = self.world.get_map().get_spawn_points()
-        self.spawn_point = random.choice(spawn_points)
-        self.vehicle = self.world.spawn_actor(vehicle_bp, self.spawn_point)
-
-        collision_bp = blueprint_library.find("sensor.other.collision")
-        self.collision_sensor = self.world.spawn_actor(collision_bp, carla.Transform(), attach_to=self.vehicle)
-        self.collision_sensor.listen(lambda event: self._on_collision(event))
-
-        camera_bp = self.world.get_blueprint_library().find("sensor.camera.semantic_segmentation")
-        camera_bp.set_attribute("image_size_x", "224")
-        camera_bp.set_attribute("image_size_y", "224")
-        camera_bp.set_attribute("fov", "90")
-        camera_transform = carla.Transform(carla.Location(x=0, y=0, z=50), carla.Rotation(pitch=-90))
-        self.bev_camera = self.world.spawn_actor(camera_bp, camera_transform, attach_to=self.vehicle)
-        self.bev_image = None
-        self.bev_camera.listen(lambda image: self._on_bev_image(image))
-
-        for _ in range(3):
-            self.world.tick()
-            time.sleep(0.1)
-
-        raw_bev = self.bev_image if self.bev_image is not None else np.zeros((224, 224, 3), dtype=np.uint8)
-        bev_obs = self._process_bev_image(raw_bev)
-        agent_feats = self.get_agent_features()
-        observation = {"bev_image": bev_obs, "agent_feats": agent_feats}
-        return self.encode_state_fn(**observation)
+        # Init metrics
+        self.total_reward = 0.0
+        self.previous_location = self.vehicle.get_transform().location
+        self.distance_traveled = 0.0
+        self.center_lane_deviation = 0.0
+        self.speed_accum = 0.0
+        self.routes_completed = 0.0
+        self.world.tick()
+        time.sleep(0.2)
+        observation = self.step(None)[0]
+        return observation
 
     def render(self, mode="human"):
-        if mode == "rgb_array":
-            if self.bev_image is not None:
-                img = self._process_bev_image(self.bev_image)
-                img = np.transpose(img, (1, 2, 0))
-                return img
-            else:
-                return np.zeros((224, 224, 3), dtype=np.uint8)
-        elif mode == "human":
-            if self.bev_image is not None:
-                img = self._process_bev_image(self.bev_image)
-                img = np.transpose(img, (1, 2, 0))
-                cv2.imshow("Bird's-Eye View", img)
-                cv2.waitKey(1)
+        if mode == "rgb_array_no_hud":
+            return self.viewer_image
+        elif mode == "rgb_array":
+            # Turn display surface into rgb_array
+            return np.array(pygame.surfarray.array3d(self.display), dtype=np.uint8).transpose([1, 0, 2])
+        elif mode == "state_pixels":
+            return self.observation
+
+        # Tick render clock
+        self.clock.tick()
+        self.hud.tick(self.world, self.clock)
+
+        # Get maneuver name
+        if self.current_road_maneuver == RoadOption.LANEFOLLOW:
+            maneuver = "Follow Lane"
+        elif self.current_road_maneuver == RoadOption.LEFT:
+            maneuver = "Left"
+        elif self.current_road_maneuver == RoadOption.RIGHT:
+            maneuver = "Right"
+        elif self.current_road_maneuver == RoadOption.STRAIGHT:
+            maneuver = "Straight"
+        elif self.current_road_maneuver == RoadOption.CHANGELANELEFT:
+            maneuver = "Change Left Lane"
+        elif self.current_road_maneuver == RoadOption.CHANGELANERIGHT:
+            maneuver = "Change Right Lane"
+        else:
+            maneuver = "INVALID"
+
+        # Add metrics to HUD
+        self.extra_info.extend([
+            "Episode {}".format(self.episode_idx),
+            "Reward: % 19.2f" % self.last_reward,
+            "",
+            "Maneuver:        % 11s" % maneuver,
+            "Routes completed:    % 7.2f" % self.routes_completed,
+            "Distance traveled: % 7d m" % self.distance_traveled,
+            "Center deviance:   % 7.2f m" % self.distance_from_center,
+            "Avg center dev:    % 7.2f m" % (self.center_lane_deviation / self.step_count),
+            "Avg speed:      % 7.2f km/h" % (self.speed_accum / self.step_count),
+            "Total reward:        % 7.2f" % self.total_reward,
+        ])
+
+        # Remove the batch dimension (from (1, 3, 224, 224) to (3, 224, 224))
+        self.viewer_image = self._draw_path(self.camera, self.viewer_image)
+        self.display.blit(pygame.surfarray.make_surface(self.viewer_image.swapaxes(0, 1)), (0, 0))
+        img = np.squeeze(self.observation, axis=0)
+        # Transpose to (224, 224, 3)
+        img = np.transpose(img, (1, 2, 0))
+
+        # Define pos_observation: place image at top-right with a 10-pixel margin.
+        display_width, display_height = self.display.get_size()
+        img_height, img_width = img.shape[:2]
+        pos_observation = (display_width - img_width - 10, 10)
+
+        # Now create a surface and blit the image at pos_observation.
+        self.display.blit(pygame.surfarray.make_surface(img), pos_observation)
+        # pos_vae_decoded = (self.display.get_size()[0] - 2 * obs_w - 10, 10)
+        # if self.decode_vae_fn:
+        #     self.display.blit(pygame.surfarray.make_surface(self.observation_decoded.swapaxes(0, 1)), pos_vae_decoded)
+
+        # if self.activate_lidar:
+        #     lidar_h, lidar_w = self.lidar_data.shape[:2]
+        #     pos_lidar = (self.display.get_size()[0] - obs_w - 10, 100)
+        #     self.display.blit(pygame.surfarray.make_surface(self.lidar_data.swapaxes(0, 1)), pos_lidar)
+
+        # Render HUD
+        self.hud.render(self.display, extra_info=self.extra_info)
+        self.extra_info = []  # Reset extra info list
+
+        # Render to screen
+        pygame.display.flip()
 
     def close(self):
         if self.vehicle is not None:
@@ -378,15 +503,118 @@ class CarlaDrivingEnv(gym.Env):
             self.bev_camera.destroy()
         pygame.quit()
         self.world.apply_settings(carla.WorldSettings())
+    
+    def _get_observation(self):
+        while self.observation_buffer is None:
+            pass
+        obs = self.observation_buffer.copy()
+        self.observation_buffer = None
+        return obs
+    
+    def _set_observation_image(self, image):
+        self.observation_buffer = self._process_bev_image(image)
 
-if __name__ == "__main__":
-    env = CarlaDrivingEnv(action_space_type="discrete", activate_render=True)
-    obs = env.reset()
-    done = False
-    total_reward = 0.0
-    while not done:
-        action = env.action_space.sample()
-        obs, reward, done, info = env.step(action)
-        total_reward += reward
-    print("Total Reward:", total_reward)
-    env.close()
+    def _clear_vehicles(self):
+        actors = self.world.get_actors().filter("vehicle.*")
+        vehicle_ids = [actor.id for actor in actors if actor.id != self.vehicle.actor.id]
+        self.client.apply_batch([carla.command.DestroyActor(vehicle_id) for vehicle_id in vehicle_ids])
+
+    def _spawn_vehicles(self, num_vehicles=40, random=False):
+        blueprints = self.world.get_blueprint_library().filter("vehicle.*")
+        blueprints = [bp for bp in blueprints if int(bp.get_attribute('number_of_wheels')) == 4]
+
+        spawn_points = self.world.get_map().get_spawn_points()
+        num_vehicles = min(num_vehicles, len(spawn_points))
+
+        if random:
+            np.random.shuffle(spawn_points)
+            batch = []
+            for i in range(num_vehicles):
+                blueprint = np.random.choice(blueprints)
+                blueprint.set_attribute('role_name', 'autopilot')
+                batch.append(carla.command.SpawnActor(blueprint, spawn_points[i])
+                            .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
+        else:
+            batch = []
+            for i in range(num_vehicles):
+                blueprint = blueprints[4]
+                blueprint.set_attribute('role_name', 'autopilot')
+                batch.append(carla.command.SpawnActor(blueprint, spawn_points[i])
+                            .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
+
+        self.client.apply_batch_sync(batch, True)
+    
+    def new_route(self):
+        # Do a soft reset (teleport vehicle)
+        self.vehicle.control.steer = float(0.0)
+        self.vehicle.control.throttle = float(0.0)
+        self.vehicle.set_simulate_physics(False)  # Reset the car's physics
+
+        # Generate waypoints along the lap
+        if not self.eval:
+            # if self.episode_idx % 2 == 0 and self.num_routes_completed == -1:
+            spawn_points_list = [self.world.map.get_spawn_points()[index] for index in next(intersection_routes)]
+            # else:
+            #     spawn_points_list = np.random.choice(self.world.map.get_spawn_points(), 2, replace=False)
+        else:
+            spawn_points_list = [self.world.map.get_spawn_points()[index] for index in next(eval_routes)]
+        route_length = 1
+        while route_length <= 1:
+            self.start_wp, self.end_wp = [self.world.map.get_waypoint(spawn.location) for spawn in
+                                          spawn_points_list]
+            self.route_waypoints = compute_route_waypoints(self.world.map, self.start_wp, self.end_wp, resolution=1.0)
+            route_length = len(self.route_waypoints)
+            if route_length <= 1:
+                spawn_points_list = np.random.choice(self.world.map.get_spawn_points(), 2, replace=False)
+
+        self.distance_from_center_history = deque(maxlen=30)
+
+        self.current_waypoint_index = 0
+        self.num_routes_completed += 1
+        self.vehicle.set_transform(self.start_wp.transform)
+        time.sleep(0.2)
+        self.vehicle.set_simulate_physics(True)
+    
+    def _on_invasion(self, event):
+        lane_types = set(x.type for x in event.crossed_lane_markings)
+        text = ["%r" % str(x).split()[-1] for x in lane_types]
+        if self.activate_render:
+            self.hud.notification("Crossed line %s" % " and ".join(text))
+
+    def _draw_path(self, camera, image):
+        """
+            Draw a connected path from start of route to end using homography.
+        """
+        vehicle_vector = vector(self.vehicle.get_transform().location)
+        # Get the world to camera matrix
+        world_2_camera = np.array(camera.get_transform().get_inverse_matrix())
+
+        # Get the attributes from the camera
+        image_w = int(camera.actor.attributes['image_size_x'])
+        image_h = int(camera.actor.attributes['image_size_y'])
+        fov = float(camera.actor.attributes['fov'])
+        for i in range(self.current_waypoint_index, len(self.route_waypoints)):
+            waypoint_location = self.route_waypoints[i][0].transform.location + carla.Location(z=1.25)
+            waypoint_vector = vector(waypoint_location)
+            if not (2 < abs(np.linalg.norm(vehicle_vector - waypoint_vector)) < 50):
+                continue
+            # Calculate the camera projection matrix to project from 3D -> 2D
+            K = build_projection_matrix(image_w, image_h, fov)
+            x, y = get_image_point(waypoint_location, K, world_2_camera)
+            if i == len(self.route_waypoints) - 1:
+                color = (255, 0, 0)
+            else:
+                color = (0, 0, 255)
+            image = cv2.circle(image, (x, y), radius=3, color=color, thickness=-1)
+        return image
+    
+    def _set_viewer_image(self, image):
+        self.viewer_image_buffer = image
+
+    def _get_viewer_image(self):
+        while self.viewer_image_buffer is None:
+            pass
+        image = self.viewer_image_buffer.copy()
+        self.viewer_image_buffer = None
+        return image
+

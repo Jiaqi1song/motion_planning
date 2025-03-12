@@ -144,7 +144,7 @@ class CustomNetwork(nn.Module):
         :return: (th.Tensor, th.Tensor) latent_policy, latent_value of the specified network.
             If all layers are shared, then ``latent_policy == latent_value``
         """
-        features = self.DQGAT.forward(obs["bev"], obs["agent"])
+        features = self.DQGAT.forward(obs["bev_image"], obs["agent_feats"])
         return self.forward_actor(features), self.forward_critic(features)
 
     def forward_actor(self, features: torch.Tensor) -> torch.Tensor:
