@@ -522,25 +522,21 @@ class CarlaDrivingEnv(gym.Env):
         vehicle_ids = [actor.id for actor in actors if actor.id != self.vehicle.actor.id]
         self.client.apply_batch([carla.command.DestroyActor(vehicle_id) for vehicle_id in vehicle_ids])
 
-    def _spawn_vehicles(self, num_vehicles=40, random=True):
+    def _spawn_vehicles(self, num_vehicles=60, random=True):
         blueprints = self.world.get_blueprint_library().filter("vehicle.*")
         blueprints = [bp for bp in blueprints if int(bp.get_attribute('number_of_wheels')) == 4]
 
         spawn_points = self.world.get_map().get_spawn_points()
         num_vehicles = min(num_vehicles, len(spawn_points))
+        batch = []
 
         if random:
-            np.random.shuffle(spawn_points)
-            batch = []
             for i in range(num_vehicles):
                 blueprint = np.random.choice(blueprints)
                 blueprint.set_attribute('role_name', 'autopilot')
-                batch.append(carla.command.SpawnActor(blueprint, spawn_points[i])
+                batch.append(carla.command.SpawnActor(blueprint, np.random.choice(spawn_points))
                             .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
         else:
-            # TODO: Manully create scenario for certain structures
-
-            batch = []
             for i in range(num_vehicles):
                 blueprint = blueprints[4]
                 blueprint.set_attribute('role_name', 'autopilot')
