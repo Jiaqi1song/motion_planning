@@ -6,6 +6,7 @@ from torch import nn
 
 from stable_baselines3 import SAC, PPO
 from stable_baselines3.common.policies import ActorCriticPolicy
+from model.dq_gat import *
 
 class CustomNetwork(nn.Module):
     """
@@ -20,8 +21,8 @@ class CustomNetwork(nn.Module):
     def __init__(
         self,
         feature_dim: int,
-        last_layer_dim_pi: int = 64,
-        last_layer_dim_vf: int = 64,
+        last_layer_dim_pi: int = 256,
+        last_layer_dim_vf: int = 256,
     ):
         super().__init__()
 
@@ -31,7 +32,8 @@ class CustomNetwork(nn.Module):
         self.latent_dim_vf = last_layer_dim_vf
         
         # DQ-GAT
-        # self.DQGAT = DQGAT()
+        self.DQGAT = DQGAT()
+
         # Policy network
         self.policy_net = nn.Sequential(
             nn.Linear(feature_dim, last_layer_dim_pi), nn.ReLU()
@@ -41,11 +43,12 @@ class CustomNetwork(nn.Module):
             nn.Linear(feature_dim, last_layer_dim_vf), nn.ReLU()
         )
 
-    def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, obs: Dict) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         :return: (th.Tensor, th.Tensor) latent_policy, latent_value of the specified network.
             If all layers are shared, then ``latent_policy == latent_value``
         """
+        features = self.DQGAT.forward(obs["bev"], obs["agent"])
         return self.forward_actor(features), self.forward_critic(features)
 
     def forward_actor(self, features: torch.Tensor) -> torch.Tensor:
@@ -76,7 +79,7 @@ class CustomActorCriticPolicy(ActorCriticPolicy):
         )
 
     def _build_mlp_extractor(self) -> None:
-        self.mlp_extractor = CustomNetwork(self.features_dim)
+        self.mlp_extractor = CustomNetwork(feature_dim=256)
 
 model = PPO(CustomActorCriticPolicy, "CartPole-v1", verbose=1)
 print(model.policy)
