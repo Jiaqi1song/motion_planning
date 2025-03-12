@@ -71,6 +71,12 @@ Evaluate the model with:
 python eval.py --config BEST --map Town02 --model "./tensorboard/<Model ID>/<ckpt>.zip" 
 ```
 
+Evaluate the model using our method with:
+
+```bash
+python my_eval.py --config 1 --map Town02 --model "./tensorboard/<Model ID>/<ckpt>.zip" 
+```
+
 The evaluation routes can be changed inside `carla_env/envs/carla_env.py` in the `eval_routes` variable. Choose two points in the map and add them to the list.
 
 

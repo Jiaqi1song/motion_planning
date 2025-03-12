@@ -522,7 +522,7 @@ class CarlaDrivingEnv(gym.Env):
         vehicle_ids = [actor.id for actor in actors if actor.id != self.vehicle.actor.id]
         self.client.apply_batch([carla.command.DestroyActor(vehicle_id) for vehicle_id in vehicle_ids])
 
-    def _spawn_vehicles(self, num_vehicles=60, random=True):
+    def _spawn_vehicles(self, num_vehicles=40, random=False):
         blueprints = self.world.get_blueprint_library().filter("vehicle.*")
         blueprints = [bp for bp in blueprints if int(bp.get_attribute('number_of_wheels')) == 4]
 
