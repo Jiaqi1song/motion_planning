@@ -62,9 +62,9 @@ states = {
 reward_params = {
     "reward_fn_5_default": dict(
         early_stop=True,
-        min_speed=20.0,  # km/h
-        max_speed=35.0,  # km/h
-        target_speed=25.0,  # kmh
+        min_speed=0,  # km/h
+        max_speed=30.0,  # km/h
+        target_speed=15.0,  # kmh
         max_distance=3.0,  # Max distance from center before terminating
         max_std_center_lane=0.4,
         max_angle_center_lane=90,
