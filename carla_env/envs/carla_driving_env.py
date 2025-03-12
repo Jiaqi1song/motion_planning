@@ -147,7 +147,7 @@ class CarlaDrivingEnv(gym.Env):
         # We directly set the image size to 224x224.
         self.bev_camera = Camera(
             self.world, 224, 224,
-            transform=sensor_transforms["dashboard"],
+            transform=sensor_transforms["bev"],
             attach_to=self.vehicle, on_recv_image=lambda e: self._set_observation_image(e),
             camera_type="sensor.camera.semantic_segmentation",
             custom_palette= True
@@ -388,7 +388,7 @@ class CarlaDrivingEnv(gym.Env):
             self.render(mode="human")
             self.clock.tick(self.fps)
 
-        encoded_obs = self.encode_state_fn(observation).detach().cpu().numpy()
+        # encoded_obs = self.encode_state_fn(observation).detach().cpu().numpy()
         return observation, self.last_reward, self.terminal_state or self.success_state, info
 
     def reset(self):
@@ -522,7 +522,7 @@ class CarlaDrivingEnv(gym.Env):
         vehicle_ids = [actor.id for actor in actors if actor.id != self.vehicle.actor.id]
         self.client.apply_batch([carla.command.DestroyActor(vehicle_id) for vehicle_id in vehicle_ids])
 
-    def _spawn_vehicles(self, num_vehicles=40, random=False):
+    def _spawn_vehicles(self, num_vehicles=40, random=True):
         blueprints = self.world.get_blueprint_library().filter("vehicle.*")
         blueprints = [bp for bp in blueprints if int(bp.get_attribute('number_of_wheels')) == 4]
 
@@ -538,6 +538,8 @@ class CarlaDrivingEnv(gym.Env):
                 batch.append(carla.command.SpawnActor(blueprint, spawn_points[i])
                             .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
         else:
+            # TODO: Manully create scenario for certain structures
+
             batch = []
             for i in range(num_vehicles):
                 blueprint = blueprints[4]

@@ -154,18 +154,31 @@ class CustomDictFeatureExtractor(BaseFeaturesExtractor):
     def __init__(self, observation_space: spaces.Dict):
         super().__init__(observation_space, features_dim=1)
         # DQ-GAT
-        self.extractor = DQGAT()
+        self.DQGAT = DQGAT()
 
     def forward(self, observations: dict) -> torch.Tensor:
-        return self.extractor(observations['bev_image'], observations['agent_feats'])
+        return self.DQGAT.forward(observations['bev_image'], observations['agent_feats'])
     
 class CustomActorCriticPolicy(MultiInputActorCriticPolicy):
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        observation_space: spaces.Dict,
+        action_space: spaces.Space,
+        lr_schedule: Callable[[float], float],
+        *args,
+        **kwargs,
+    ):
+        # Disable orthogonal initialization
+        kwargs["ortho_init"] = False
         super().__init__(
+            observation_space,
+            action_space,
+            lr_schedule,
             features_extractor_class=CustomDictFeatureExtractor,
             *args,
             **kwargs,
         )
+        self.share_features_extractor = False
 
     def _build_mlp_extractor(self) -> None:
         self.mlp_extractor = CustomNetwork(feature_dim=256)
