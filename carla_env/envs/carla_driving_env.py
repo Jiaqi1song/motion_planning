@@ -187,21 +187,24 @@ class CarlaDrivingEnv(gym.Env):
 
     def get_agent_features(self):
         """
-        Returns an array (shape: (20, 12)) of agent features.
+        Returns an array (shape: (1, 20, 12)) of agent features.
         Each row is a NpSequenceArray with:
         [x, y, d, psi, v_x, v_y, a_x, a_y, w, l, class_type, token_type]
         Coordinates and kinematics are expressed in the ego-vehicle's frame.
+        All agents are sorted in ascending order of their vehicle ID with the ego vehicle always first.
+        If a non-ego vehicle is farther than the threshold (50 m), its features are zeroed and token_type set to PAD_TOKEN.
         Pads with zeros if fewer than 20 agents are detected.
-        For the ego-vehicle, token_type is set to EGO_TOKEN;
-        for others, it's set to AGENT_TOKEN.
         """
+        max_distance_threshold = 50.0  # meters
+
         ego_transform = self.vehicle.get_transform()
         ego_velocity = self.vehicle.get_velocity()
         vehicles = self.world.get_actors().filter("vehicle.*")
-        feature_list = []
         
+        ego_feature = None
+        other_features = []
         for veh in vehicles:
-            # Use ego data if vehicle is the ego.
+            # Determine if this is the ego vehicle.
             if veh.id == self.vehicle.id:
                 veh_transform = ego_transform
                 veh_velocity = ego_velocity
@@ -216,55 +219,97 @@ class CarlaDrivingEnv(gym.Env):
             # Compute relative position.
             rel_x, rel_y = transform_to_ego_frame(ego_transform, veh_transform.location)
             d = math.sqrt(rel_x**2 + rel_y**2)
-            # Relative yaw.
-            psi = veh_transform.rotation.yaw - ego_transform.rotation.yaw
-            # Transform velocities to ego frame.
-            vx_world = veh_velocity.x
-            vy_world = veh_velocity.y
-            yaw_rad = math.radians(ego_transform.rotation.yaw)
-            rel_vx = vx_world * math.cos(-yaw_rad) - vy_world * math.sin(-yaw_rad)
-            rel_vy = vx_world * math.sin(-yaw_rad) + vy_world * math.cos(-yaw_rad)
-            # Transform acceleration similarly.
-            ax_world = veh_accel.x
-            ay_world = veh_accel.y
-            rel_ax = ax_world * math.cos(-yaw_rad) - ay_world * math.sin(-yaw_rad)
-            rel_ay = ax_world * math.sin(-yaw_rad) + ay_world * math.cos(-yaw_rad)
-            # Get vehicle dimensions (CARLA gives half extents).
-            bb = veh.bounding_box
-            w = bb.extent.y * 2
-            l = bb.extent.x * 2
             
-            # Create a zero array and fill the fields.
-            arr = np.zeros((NpSequence_DIM,), dtype=np.float32)
-            arr[X_DIM] = rel_x
-            arr[Y_DIM] = rel_y
-            arr[DIST_DIM] = d
-            arr[YAW_DIM] = psi
-            arr[VX_DIM] = rel_vx
-            arr[VY_DIM] = rel_vy
-            arr[AX_DIM] = rel_ax
-            arr[AY_DIM] = rel_ay
-            arr[WIDTH_DIM] = w
-            arr[LENGTH_DIM] = l
-            arr[CLASS_TYPE_DIM] = ClassType.VEHICLE.value  # Change if needed.
-            arr[TOKEN_TYPE_DIM] = token
-            # Convert to NpSequenceArray (if desired).
+            # For non-ego vehicles, if the distance is too large, zero out the features.
+            # print(d)
+            if veh.id != self.vehicle.id and d > max_distance_threshold:
+                arr = np.zeros((NpSequenceArray.dim,), dtype=np.float32)
+                arr[TOKEN_TYPE_DIM] = TokenType.PAD_TOKEN.value
+            else:
+                # Compute relative yaw.
+                psi = veh_transform.rotation.yaw - ego_transform.rotation.yaw
+                yaw_rad = math.radians(ego_transform.rotation.yaw)
+                # Transform velocities to ego frame.
+                vx_world = veh_velocity.x
+                vy_world = veh_velocity.y
+                rel_vx = vx_world * math.cos(-yaw_rad) - vy_world * math.sin(-yaw_rad)
+                rel_vy = vx_world * math.sin(-yaw_rad) + vy_world * math.cos(-yaw_rad)
+                # Transform acceleration similarly.
+                ax_world = veh_accel.x
+                ay_world = veh_accel.y
+                rel_ax = ax_world * math.cos(-yaw_rad) - ay_world * math.sin(-yaw_rad)
+                rel_ay = ax_world * math.sin(-yaw_rad) + ay_world * math.cos(-yaw_rad)
+                # Get vehicle dimensions (CARLA gives half extents).
+                bb = veh.bounding_box
+                w = bb.extent.y * 2
+                l = bb.extent.x * 2
+                
+                arr = np.zeros((NpSequenceArray.dim,), dtype=np.float32)
+                arr[X_DIM] = rel_x
+                arr[Y_DIM] = rel_y
+                arr[DIST_DIM] = d
+                arr[YAW_DIM] = psi
+                arr[VX_DIM] = rel_vx
+                arr[VY_DIM] = rel_vy
+                arr[AX_DIM] = rel_ax
+                arr[AY_DIM] = rel_ay
+                arr[WIDTH_DIM] = w
+                arr[LENGTH_DIM] = l
+                arr[CLASS_TYPE_DIM] = ClassType.VEHICLE.value
+                arr[TOKEN_TYPE_DIM] = token
+
+            # Print for debugging.
+            # print("Vehicle ID:", veh.id)
+            # print("Relative x, y:", rel_x, rel_y)
+            # print("Distance:", d)
+            # if veh.id == self.vehicle.id or d <= max_distance_threshold:
+            #     print("Relative yaw:", psi)
+            #     print("Relative velocities (vx, vy):", rel_vx, rel_vy)
+            #     print("Relative accelerations (ax, ay):", rel_ax, rel_ay)
+            #     print("Dimensions (w, l):", w, l)
+            #     print("Token type:", token)
+            # else:
+            #     print("Vehicle too far; features padded.")
+            # print("Full feature vector:", arr)
+            # print("-" * 50)
+            
             feature = NpSequenceArray(arr)
-            feature_list.append(feature)
+            # print(feature)
+            if veh.id == self.vehicle.id:
+                ego_feature = feature
+            else:
+                other_features.append((veh.id, feature))
+        
+        # Sort non-ego vehicles by their ID in ascending order.
+        other_features.sort(key=lambda x: x[0])
+        other_features = [f for _, f in other_features]
+        
+        # Combine with ego feature (which is always first).
+        feature_list = []
+        if ego_feature is not None:
+            feature_list.append(ego_feature)
+        feature_list.extend(other_features)
         
         # Convert list to numpy array.
-        features = np.array(feature_list, dtype=np.float32)
+        if feature_list:
+            features = np.array(feature_list, dtype=np.float32)
+        else:
+            features = np.zeros((0, NpSequenceArray.dim), dtype=np.float32)
+        
         max_agents = 20
         num_agents = features.shape[0]
         if num_agents < max_agents:
-            pad = np.zeros((max_agents - num_agents, NpSequence_DIM), dtype=np.float32)
+            pad = np.zeros((max_agents - num_agents, NpSequenceArray.dim), dtype=np.float32)
             features = np.vstack([features, pad])
         elif num_agents > max_agents:
-            # Choose the closest agents based on distance.
             distances = features[:, DIST_DIM]
             idx = np.argsort(distances)[:max_agents]
             features = features[idx]
+        
+        # Add a new axis so the final shape is (1, 20, 12).
         features = np.expand_dims(features, axis=0)
+        # print("Final features shape:", features.shape)
+        # print(features)
         return features
 
 
