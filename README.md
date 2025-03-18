@@ -56,7 +56,7 @@ python train.py --config BEST --total_timesteps 100000 --map Town02
 
 Train the model using our method with:
 ```bash
-python my_train.py --config 1 --total_timesteps 100000 --map Town02
+python my_train.py --config 1 --total_timesteps 100000 --map Town05
 ```
 
 The training results will be saved in the `tensorboard` folder. You can open it with:
@@ -74,7 +74,7 @@ python eval.py --config BEST --map Town02 --model "./tensorboard/<Model ID>/<ckp
 Evaluate the model using our method with:
 
 ```bash
-python my_eval.py --config 1 --map Town02 --model "./tensorboard/<Model ID>/<ckpt>.zip" 
+python my_eval.py --config 1 --map Town05 --model "./tensorboard/<Model ID>/<ckpt>.zip" 
 ```
 
 The evaluation routes can be changed inside `carla_env/envs/carla_env.py` in the `eval_routes` variable. Choose two points in the map and add them to the list.
@@ -98,7 +98,4 @@ To collect data from CARLA automatically using a RL agent in early stages, run:
 python carla_env/envs/collect_data_rl_env.py
 ```
 
-### Train our model with DQ-GAT:
-```bash
-python my_train.py --config 1 --total_timesteps 1000000 --map Town02
-```
+

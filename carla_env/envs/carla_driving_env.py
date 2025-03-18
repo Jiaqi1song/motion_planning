@@ -35,8 +35,13 @@ discrete_actions = {
     2: [1.0, 1.0],
     3: [0.0, 0.0],  # braking / stopping
 }
-intersection_routes = itertools.cycle([(57, 81)])
-eval_routes = itertools.cycle([(48, 21), (0, 72), (28, 83), (61, 39)])
+# intersection_routes = itertools.cycle([(57, 81)])
+# town05:
+intersection_routes = itertools.cycle([(283, 66)])
+
+vehicle_sp_pts = [281, 135, 65, 101, 63, 140, 115, 114, 278, 260, 104, 287, 57, 128, 137, 60, 122, 97, 70, 6, 277, 41, 136, ]
+# eval_routes = itertools.cycle([(48, 21), (0, 72), (28, 83), (61, 39)])
+eval_routes = itertools.cycle([(283, 66)])
 class CarlaDrivingEnv(gym.Env):
     """
     Gym environment for autonomous driving in CARLA designed for DQ-GAT.
@@ -65,7 +70,7 @@ class CarlaDrivingEnv(gym.Env):
                  host="127.0.0.1",
                  port=2000,
                  fps=15,
-                 map='Town07',
+                 map='Town05',
                  action_space_type="discrete",  # "continuous" or "discrete"
                  reward_fn=None,
                  encode_state_fn=None,
@@ -125,12 +130,11 @@ class CarlaDrivingEnv(gym.Env):
         self.step_count = 0
         self.max_episode_steps = 1000
         self.episode_ended = False
-
+        width, height = 900, 900
         # Pygame display for rendering.
         if self.activate_render:
             pygame.init()
             pygame.font.init()
-            width, height = 900, 900
             self.display = pygame.display.set_mode((width, height), pygame.HWSURFACE | pygame.DOUBLEBUF)
             self.clock = pygame.time.Clock()
             self.hud = HUD(width, height)
@@ -547,16 +551,17 @@ class CarlaDrivingEnv(gym.Env):
         pygame.display.flip()
 
     def close(self):
-        if self.vehicle is not None:
-            self.vehicle.destroy()
-        if self.collision_sensor is not None:
-            self.collision_sensor.destroy()
-        if self.bev_camera is not None:
-            self.bev_camera.destroy()
-        if self.camera is not None:
-            self.camera.destroy()
-        pygame.quit()
-        self.world.apply_settings(carla.WorldSettings())
+        print("closing triggered")
+        # if self.vehicle is not None:
+        #     self.vehicle.destroy()
+        # if self.collision_sensor is not None:
+        #     self.collision_sensor.destroy()
+        # if self.bev_camera is not None:
+        #     self.bev_camera.destroy()
+        # if self.camera is not None:
+        #     self.camera.destroy()
+        # pygame.quit()
+        # self.world.apply_settings(carla.WorldSettings())
     
     def _get_observation(self):
         while self.observation_buffer is None:
@@ -578,11 +583,16 @@ class CarlaDrivingEnv(gym.Env):
         blueprints = [bp for bp in blueprints if int(bp.get_attribute('number_of_wheels')) == 4]
 
         spawn_points = self.world.get_map().get_spawn_points()
-        num_vehicles = min(num_vehicles, len(spawn_points))
+        # Filter out indices that are out of range.
+        valid_indices = [i for i in vehicle_sp_pts if i < len(spawn_points)]
+        
+        # Select spawn points based on the provided indices.
+        available_spawn_points = [spawn_points[i] for i in valid_indices]
+          
+        num_vehicles = min(num_vehicles, len(available_spawn_points))
         batch = []
         
         # Shuffle spawn points to ensure uniqueness.
-        available_spawn_points = list(spawn_points)
         random.shuffle(available_spawn_points)
         
         if random_flag:
@@ -591,14 +601,18 @@ class CarlaDrivingEnv(gym.Env):
                 blueprint.set_attribute('role_name', 'autopilot')
                 # Use unique spawn points by popping from the shuffled list.
                 spawn_point = available_spawn_points.pop(0)
-                batch.append(carla.command.SpawnActor(blueprint, spawn_point)
-                            .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
+                batch.append(
+                    carla.command.SpawnActor(blueprint, spawn_point)
+                    .then(carla.command.SetAutopilot(carla.command.FutureActor, True))
+                )
         else:
             for i in range(num_vehicles):
                 blueprint = blueprints[4]
                 blueprint.set_attribute('role_name', 'autopilot')
-                batch.append(carla.command.SpawnActor(blueprint, available_spawn_points[i])
-                            .then(carla.command.SetAutopilot(carla.command.FutureActor, True)))
+                batch.append(
+                    carla.command.SpawnActor(blueprint, available_spawn_points[i])
+                    .then(carla.command.SetAutopilot(carla.command.FutureActor, True))
+                )
         
         self.client.apply_batch_sync(batch, True)
     
