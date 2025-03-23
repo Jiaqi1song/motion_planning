@@ -369,11 +369,11 @@ def tokenize_data(data):
     # Create an output array with the desired shape.
     output = np.zeros((batch_size, num_agents, 10), dtype=np.int32)
 
-    def calculate_token(value, value_range, start, step):
+    def calculate_token(value, value_range, start, end, step):
         # Clamp the value within the range and calculate the token.
         value = np.maximum(value_range[0], np.minimum(value_range[1], value))
         token = start + int(round((value - value_range[0]) / step))
-        token = min(token, VocabularyStateType.PAD_TOKEN.end)
+        token = min(token, end)
         return token
     
     # Loop over the batch and agents to tokenize data.
@@ -394,16 +394,16 @@ def tokenize_data(data):
                 l = data_cpu[bs][n][LENGTH_DIM]
 
                 # Compute tokens for each attribute.
-                output[bs][n][0] = calculate_token(x, X_RANGE, X_START, X_STEP)
-                output[bs][n][1] = calculate_token(y, Y_RANGE, Y_START, Y_STEP)
-                output[bs][n][2] = calculate_token(d, DIST_RANGE, DIST_START, DIST_STEP)
-                output[bs][n][3] = calculate_token(psi, YAW_RANGE, YAW_START, YAW_STEP)
-                output[bs][n][4] = calculate_token(vx, VX_RANGE, VX_START, VX_STEP)
-                output[bs][n][5] = calculate_token(vy, VY_RANGE, VY_START, VY_STEP)
-                output[bs][n][6] = calculate_token(ax, AX_RANGE, AX_START, AX_STEP)
-                output[bs][n][7] = calculate_token(ay, AY_RANGE, AY_START, AY_STEP)
-                output[bs][n][8] = calculate_token(w, WIDTH_RANGE, WIDTH_START, WIDTH_STEP)
-                output[bs][n][9] = calculate_token(l, LENGTH_RANGE, LENGTH_START, LENGTH_STEP)
+                output[bs][n][0] = calculate_token(x, X_RANGE, X_START, X_END, X_STEP)
+                output[bs][n][1] = calculate_token(y, Y_RANGE, Y_START, Y_END, Y_STEP)
+                output[bs][n][2] = calculate_token(d, DIST_RANGE, DIST_START, DIST_END, DIST_STEP)
+                output[bs][n][3] = calculate_token(psi, YAW_RANGE, YAW_START, YAW_END, YAW_STEP)
+                output[bs][n][4] = calculate_token(vx, VX_RANGE, VX_START, VX_END, VX_STEP)
+                output[bs][n][5] = calculate_token(vy, VY_RANGE, VY_START, VY_END, VY_STEP)
+                output[bs][n][6] = calculate_token(ax, AX_RANGE, AX_START, AX_END, AX_STEP)
+                output[bs][n][7] = calculate_token(ay, AY_RANGE, AY_START, AY_END, AY_STEP)
+                output[bs][n][8] = calculate_token(w, WIDTH_RANGE, WIDTH_START, WIDTH_END, WIDTH_STEP)
+                output[bs][n][9] = calculate_token(l, LENGTH_RANGE, LENGTH_START, LENGTH_END, LENGTH_STEP)
             else:
                 output[bs, n, :] = VocabularyStateType.PAD_TOKEN.end
         
