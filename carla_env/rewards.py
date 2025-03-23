@@ -1,5 +1,6 @@
 import numpy as np
 from config import CONFIG
+import math
 
 low_speed_timer = 0
 
@@ -121,13 +122,11 @@ reward_functions["reward_fn_waypoints"] = create_reward_fn(reward_fn_waypoints)
 
 # ================================================================================
 W_PROGRESS = 1.0
-W_COMFORT = 0.5
-W_AREA = 1.0
+W_COMFORT = 0.2
+W_AREA = 0.8
 
 COMFORT_ACCEL_MAX = 5.0                # m/s^2
-COMFORT_JERK_MAX = 5.0                 # m/s^3
 COMFORT_STEERING_MAX = np.deg2rad(40)  # in radians
-
 
 def reward_fn_av(env):
     """
@@ -150,15 +149,22 @@ def reward_fn_av(env):
         progress_reward = -0.5
 
     # --- Comfort Component ---
-    acceleration = env.vehicle.get_acceleration_ego() 
-    jerk = env.vehicle.get_jerk_ego() 
+    current_accel = env.vehicle.get_acceleration()
+    ego_transform = env.vehicle.get_transform()
+    yaw_rad = math.radians(ego_transform.rotation.yaw)
+    
+    # Transform acceleration similarly.
+    ax_world = current_accel.x
+    ay_world = current_accel.y
+    rel_ax = ax_world * math.cos(-yaw_rad) - ay_world * math.sin(-yaw_rad)
+    rel_ay = ax_world * math.sin(-yaw_rad) + ay_world * math.cos(-yaw_rad)
+    acceleration = np.sqrt(rel_ax**2 + rel_ay**2)
     steering = env.vehicle.control.steer 
     
     # Compute factors (in [0,1]) that are 1 when the value is perfectly comfortable and decrease if too high.
     accel_factor = max(1.0 - abs(acceleration) / COMFORT_ACCEL_MAX, 0.0)
-    jerk_factor = max(1.0 - abs(jerk) / COMFORT_JERK_MAX, 0.0)
     steering_factor = max(1.0 - abs(steering) / COMFORT_STEERING_MAX, 0.0)
-    comfort_reward = accel_factor * jerk_factor * steering_factor
+    comfort_reward = accel_factor * steering_factor
 
     # --- Drive-in-Area Component ---
     # Use a centering factor based on the vehicle's distance from the lane center.

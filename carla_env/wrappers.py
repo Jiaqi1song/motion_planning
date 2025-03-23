@@ -381,47 +381,9 @@ class Vehicle(CarlaActorBase):
             self.collision_sensor = CollisionSensor(world, self, on_collision_fn=on_collision_fn)
         if callable(on_invasion_fn):
             self.lane_sensor = LaneInvasionSensor(world, self, on_invasion_fn=on_invasion_fn)
-        
-        # Initialize variables for physics updates
-        self.current_velocity = carla.Vector3D(0, 0, 0)
-        self.previous_acceleration = carla.Vector3D(0, 0, 0)
-        self.current_acceleration = carla.Vector3D(0, 0, 0)
-        self.current_jerk = carla.Vector3D(0, 0, 0)
-        self.last_time = time.time()
 
     def tick(self):
         self.actor.apply_control(self.control)
-
-        current_time = time.time()
-        dt = current_time - self.last_time
-        self.last_time = current_time
-
-        current_velocity = self.get_velocity()
-        current_accel = self.get_acceleration()
-        ego_transform = self.get_transform()
-        yaw_rad = math.radians(ego_transform.rotation.yaw)
-        
-        # Transform velocities to ego frame.
-        vx_world = current_velocity.x
-        vy_world = current_velocity.y
-        rel_vx = vx_world * math.cos(-yaw_rad) - vy_world * math.sin(-yaw_rad)
-        rel_vy = vx_world * math.sin(-yaw_rad) + vy_world * math.cos(-yaw_rad)
-        self.current_velocity = carla.Vector3D(rel_vx, rel_vy, 0)
-
-        # Transform acceleration similarly.
-        ax_world = current_accel.x
-        ay_world = current_accel.y
-        rel_ax = ax_world * math.cos(-yaw_rad) - ay_world * math.sin(-yaw_rad)
-        rel_ay = ax_world * math.sin(-yaw_rad) + ay_world * math.cos(-yaw_rad)
-        self.current_acceleration = carla.Vector3D(rel_ax, rel_ay, 0)
-
-        # Transform jerk similarly.
-        jx_world = (current_accel.x - self.previous_acceleration.x) / dt
-        jy_world = (current_accel.y - self.previous_acceleration.y) / dt
-        rel_jx = jx_world * math.cos(-yaw_rad) - ay_world * math.sin(-yaw_rad)
-        rel_jy = jy_world * math.sin(-yaw_rad) + ay_world * math.cos(-yaw_rad)
-        self.current_jerk = carla.Vector3D(rel_jx, rel_jy, 0)
-        self.previous_acceleration = current_accel
 
     def get_speed(self):
         """
@@ -437,30 +399,6 @@ class Vehicle(CarlaActorBase):
 
     def get_closest_waypoint(self):
         return self.world.map.get_waypoint(self.get_transform().location, project_to_road=True)
-
-    def get_velocity_ego(self):
-        """
-        Return the magnitude (scalar) of the current jerk in m/s^3.
-        """
-        velocity = self.current_velocity
-        scalar_velocity = np.sqrt(velocity.x**2 + velocity.y**2)
-        return scalar_velocity
-    
-    def get_acceleration_ego(self):
-        """
-        Return the magnitude (scalar) of the current acceleration in m/s^2.
-        """
-        acc = self.current_acceleration
-        scalar_acc = np.sqrt(acc.x**2 + acc.y**2)
-        return scalar_acc
-
-    def get_jerk_ego(self):
-        """
-        Return the magnitude (scalar) of the current jerk in m/s^3.
-        """
-        jerk = self.current_jerk
-        scalar_jerk = np.sqrt(jerk.x**2 + jerk.y**2)
-        return scalar_jerk
 
 
 # ===============================================================================

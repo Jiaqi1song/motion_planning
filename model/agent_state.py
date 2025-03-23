@@ -162,10 +162,6 @@ class VocabularyStateType(Enum):
     PAD_TOKEN = (1145, 1145), 'pad_token', 10
 
     @property
-    def num_agent_attributes(self) -> str:
-        return 3
-
-    @property
     def vocal_size(self) -> int:
         return self.PAD_TOKEN.end+1
 
@@ -357,33 +353,60 @@ AY_START, AY_END, AY_RANGE, AY_STEP = VocabularyStateType.AY.start, VocabularySt
 def tokenize_data(data):
     """
     Convert data points into tokens based on specified ranges and steps.
-    Operates entirely on GPU using PyTorch tensor operations.
     
     Args:
-        data (torch.Tensor): The data tensor to be tokenized, assumed to be on GPU.
+        data (torch.Tensor): The data tensor to be tokenized.
     
     Returns:
-        torch.Tensor: The tokenized data tensor.
+        torch.Tensor: The tokenized data tensor on GPU.
     """
-    batch_size, num_agents, _ = data.shape
-    # Pre-allocate the output tensor on the same device (GPU) as the input data.
-    output = torch.empty(batch_size, num_agents, 10, device=data.device, dtype=torch.int32)
+    # Move data to CPU and convert to a NumPy array.
+    data_cpu = data.cpu().numpy()
 
-    def calculate_token_tensor(value, value_range, start, step):
-        clamped = torch.clamp(value, min=value_range[0], max=value_range[1])
-        token = start + torch.round((clamped - value_range[0]) / step).to(torch.int32)
+    # Get dimensions from the data
+    batch_size, num_agents, _ = data_cpu.shape
+
+    # Create an output array with the desired shape.
+    output = np.zeros((batch_size, num_agents, 10), dtype=np.int32)
+
+    def calculate_token(value, value_range, start, step):
+        # Clamp the value within the range and calculate the token.
+        value = np.maximum(value_range[0], np.minimum(value_range[1], value))
+        token = start + int(round((value - value_range[0]) / step))
+        token = min(token, VocabularyStateType.PAD_TOKEN.end)
         return token
+    
+    # Loop over the batch and agents to tokenize data.
+    for bs in range(batch_size):
+        for n in range(num_agents):
+            # Extract values using the appropriate dimension constants.
 
-    # Tokenize each dimension attribute using vectorized operations.
-    output[..., 0] = calculate_token_tensor(data[..., X_DIM], X_RANGE, X_START, X_STEP)
-    output[..., 1] = calculate_token_tensor(data[..., Y_DIM], Y_RANGE, Y_START, Y_STEP)
-    output[..., 2] = calculate_token_tensor(data[..., DIST_DIM], DIST_RANGE, DIST_START, DIST_STEP)
-    output[..., 3] = calculate_token_tensor(data[..., YAW_DIM], YAW_RANGE, YAW_START, YAW_STEP)
-    output[..., 4] = calculate_token_tensor(data[..., VX_DIM], VX_RANGE, VX_START, VX_STEP)
-    output[..., 5] = calculate_token_tensor(data[..., VY_DIM], VY_RANGE, VY_START, VY_STEP)
-    output[..., 6] = calculate_token_tensor(data[..., AX_DIM], AX_RANGE, AX_START, AX_STEP)
-    output[..., 7] = calculate_token_tensor(data[..., AY_DIM], AY_RANGE, AY_START, AY_STEP)
-    output[..., 8] = calculate_token_tensor(data[..., WIDTH_DIM], WIDTH_RANGE, WIDTH_START, WIDTH_STEP)
-    output[..., 9] = calculate_token_tensor(data[..., LENGTH_DIM], LENGTH_RANGE, LENGTH_START, LENGTH_STEP)
+            if data_cpu[bs][n][TOKEN_TYPE_DIM] != TokenType.PAD_TOKEN.value:
+                x = data_cpu[bs][n][X_DIM]
+                y = data_cpu[bs][n][Y_DIM]
+                d = data_cpu[bs][n][DIST_DIM]
+                psi = data_cpu[bs][n][YAW_DIM]
+                vx = data_cpu[bs][n][VX_DIM]
+                vy = data_cpu[bs][n][VY_DIM]
+                ax = data_cpu[bs][n][AX_DIM]
+                ay = data_cpu[bs][n][AY_DIM]
+                w = data_cpu[bs][n][WIDTH_DIM]
+                l = data_cpu[bs][n][LENGTH_DIM]
 
-    return output
+                # Compute tokens for each attribute.
+                output[bs][n][0] = calculate_token(x, X_RANGE, X_START, X_STEP)
+                output[bs][n][1] = calculate_token(y, Y_RANGE, Y_START, Y_STEP)
+                output[bs][n][2] = calculate_token(d, DIST_RANGE, DIST_START, DIST_STEP)
+                output[bs][n][3] = calculate_token(psi, YAW_RANGE, YAW_START, YAW_STEP)
+                output[bs][n][4] = calculate_token(vx, VX_RANGE, VX_START, VX_STEP)
+                output[bs][n][5] = calculate_token(vy, VY_RANGE, VY_START, VY_STEP)
+                output[bs][n][6] = calculate_token(ax, AX_RANGE, AX_START, AX_STEP)
+                output[bs][n][7] = calculate_token(ay, AY_RANGE, AY_START, AY_STEP)
+                output[bs][n][8] = calculate_token(w, WIDTH_RANGE, WIDTH_START, WIDTH_STEP)
+                output[bs][n][9] = calculate_token(l, LENGTH_RANGE, LENGTH_START, LENGTH_STEP)
+            else:
+                output[bs, n, :] = VocabularyStateType.PAD_TOKEN.end
+        
+    # Convert the output NumPy array back to a PyTorch tensor on the same device as the input.
+    output_tensor = torch.from_numpy(output).to(data.device)
+    return output_tensor
