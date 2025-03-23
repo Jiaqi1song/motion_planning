@@ -373,7 +373,7 @@ def tokenize_data(data):
         # Clamp the value within the range and calculate the token.
         value = np.maximum(value_range[0], np.minimum(value_range[1], value))
         token = start + int(round((value - value_range[0]) / step))
-        token = min(token, end)
+        token = min(max(start, token), end)
         return token
     
     # Loop over the batch and agents to tokenize data.
