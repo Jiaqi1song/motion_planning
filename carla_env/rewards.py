@@ -118,3 +118,63 @@ def reward_fn_waypoints(env):
 
 
 reward_functions["reward_fn_waypoints"] = create_reward_fn(reward_fn_waypoints)
+
+# ================================================================================
+W_PROGRESS = 1.0
+W_COMFORT = 0.5
+W_AREA = 1.0
+
+COMFORT_ACCEL_MAX = 5.0                # m/s^2
+COMFORT_JERK_MAX = 5.0                 # m/s^3
+COMFORT_STEERING_MAX = np.deg2rad(40)  # in radians
+
+
+def reward_fn_av(env):
+    """
+    Overall reward function for autonomous vehicle training combining:
+    
+    - Progress Reward: Rewards progress by counting passed waypoints; penalizes if stuck.
+    - Comfort Reward: Rewards smooth driving (acceptable acceleration, jerk, and steering).
+    - Drive-in-Area Reward: Rewards staying centered in the driving lane.
+    
+    Each reward is weighted differently.
+    """
+
+    # --- Progress Component ---
+    # Here we assume the environment tracks waypoint progress via indices.
+    progress_delta = env.current_waypoint_index - env.prev_waypoint_index
+    if progress_delta > 0:
+        progress_reward = progress_delta
+    else:
+        # Penalize if there is no progress (stuck or not moving forward)
+        progress_reward = -0.5
+
+    # --- Comfort Component ---
+    acceleration = env.vehicle.get_acceleration_ego() 
+    jerk = env.vehicle.get_jerk_ego() 
+    steering = env.vehicle.control.steer 
+    
+    # Compute factors (in [0,1]) that are 1 when the value is perfectly comfortable and decrease if too high.
+    accel_factor = max(1.0 - abs(acceleration) / COMFORT_ACCEL_MAX, 0.0)
+    jerk_factor = max(1.0 - abs(jerk) / COMFORT_JERK_MAX, 0.0)
+    steering_factor = max(1.0 - abs(steering) / COMFORT_STEERING_MAX, 0.0)
+    comfort_reward = accel_factor * jerk_factor * steering_factor
+
+    # --- Drive-in-Area Component ---
+    # Use a centering factor based on the vehicle's distance from the lane center.
+    centering_factor = max(1.0 - env.distance_from_center / max_distance, 0.0)
+    angle = env.vehicle.get_angle(env.current_waypoint)
+    angle_factor = max(1.0 - abs(angle / np.deg2rad(max_angle_center_lane)), 0.0)
+    std = np.std(env.distance_from_center_history)
+    distance_std_factor = max(1.0 - abs(std / max_std_center_lane), 0.0)
+
+    drive_area_reward = centering_factor * angle_factor * distance_std_factor
+
+    # --- Total Reward ---
+    total_reward = (W_PROGRESS * progress_reward +
+                    W_COMFORT * comfort_reward +
+                    W_AREA * drive_area_reward)
+                    
+    return total_reward
+
+reward_functions["av_reward"] = create_reward_fn(reward_fn_av)

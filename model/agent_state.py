@@ -3,6 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Tuple
 import numpy as np
+import torch
 
 class TokenType(Enum):
     """
@@ -148,14 +149,14 @@ TOKEN_TYPE_DIM = NpSequenceArray.token_type_dim
 class VocabularyStateType(Enum):
     """Enum of classification types for TrackedObject with integer ranges."""
 
-    X = (0, 199), 'x', 0          # 200, 0.2, -100, 100
-    Y = (200, 399), 'y', 1        # 200, 0.2, -100, 100
+    X = (0, 199), 'x', 0          # 200, 0.2, -50, 50
+    Y = (200, 399), 'y', 1        # 200, 0.2, -50, 50
     DIST = (400, 599), "dist", 2  # 200, 0.2, -100, 100
     YAW = (600, 699), 'yaw', 3    # 100, np.pi/100, -np.pi, np.pi
     VX = (700, 799), 'vx', 4      # 100, 0.25, -25, 25
     VY = (800, 899), 'vy', 5      # 100, 0.25, -25, 25
-    AX = (900, 999), 'ax', 6      # 100, 0.25, -25, 25
-    AY = (1000, 1099), 'ay', 7    # 100, 0.25, -25, 25
+    AX = (900, 999), 'ax', 6      # 100, 0.25, -10, 10
+    AY = (1000, 1099), 'ay', 7    # 100, 0.25, -10, 10
     WIDTH = (1100, 1114), 'width', 8 # 15
     LENGTH = (1115, 1144), 'length', 9 #30
     PAD_TOKEN = (1145, 1145), 'pad_token', 10
@@ -170,11 +171,11 @@ class VocabularyStateType(Enum):
 
     @property
     def x_range(self) -> Tuple[float, float]:
-        return (-100, 100)
+        return (-50, 50)
 
     @property
     def y_range(self) -> Tuple[float, float]:
-        return (-100, 100)
+        return (-50, 50)
 
     @property
     def dist_range(self) -> Tuple[float, float]:
@@ -194,11 +195,11 @@ class VocabularyStateType(Enum):
     
     @property
     def ax_range(self) -> Tuple[float, float]:
-        return (-25, 25)
+        return (-10, 10)
 
     @property
     def ay_range(self) -> Tuple[float, float]:
-        return (-25, 25)
+        return (-10, 10)
 
     @property
     def width_range(self) -> Tuple[float, float]:
@@ -325,34 +326,6 @@ class VocabularyStateType(Enum):
         sampling_mask[self.start:self.end+1] = 1
         return sampling_mask > 0
 
-def get_agent_array():
-    """
-    Generate an array representing an agent's state in a specific frame.
-
-    Returns:
-        np.ndarray: A numpy array representing the agent's state in the sequence.
-    """
-
-    agent_array = np.zeros((NpSequence_DIM, ))
-
-    # TODO: Generatet the agent array for the current agent
-    agent_array[X_DIM] = ...
-    agent_array[Y_DIM] = ...
-    agent_array[DIST_DIM] = ...
-    agent_array[YAW_DIM] = ...
-    agent_array[VX_DIM] = ...
-    agent_array[VY_DIM] = ...
-    agent_array[AX_DIM] = ...
-    agent_array[AY_DIM] = ...
-    agent_array[WIDTH_DIM] = ...
-    agent_array[LENGTH_DIM] = ...
-    agent_array[CLASS_TYPE_DIM] = ClassType.VEHICLE.value
-
-    # Note: if it is padding, set special value or use mask
-    agent_array[TOKEN_TYPE_DIM] = TokenType.PAD_TOKEN.value
-
-    return agent_array
-
 def within_valid_range(data, valid_range):
     """
     Check if the given data points (x, y) are within the specified valid range.
@@ -370,25 +343,6 @@ def within_valid_range(data, valid_range):
         return True
     return False
 
-def process_data(max_seq_len=50):
-    """
-    Process data
-    
-    Args:
-        max_seq_len (int): Maximum sequence length for the output tokenized data.
-       
-    Returns:
-        np.ndarray: The data array.
-    """
-    output = np.ones((max_seq_len, NpSequence_DIM))
-
-    for i in range(max_seq_len):
-        output[i] = get_agent_array()
-        
-        # TODO: handle special case and out of valid range case
-
-    return output
-
 X_START, X_END, X_RANGE, X_STEP = VocabularyStateType.X.start, VocabularyStateType.X.end, VocabularyStateType.X.x_range, VocabularyStateType.X.x_step
 Y_START, Y_END, Y_RANGE, Y_STEP = VocabularyStateType.Y.start, VocabularyStateType.Y.end, VocabularyStateType.Y.y_range, VocabularyStateType.Y.y_step
 DIST_START, DIST_END, DIST_RANGE, DIST_STEP = VocabularyStateType.DIST.start, VocabularyStateType.DIST.end, VocabularyStateType.DIST.y_range, VocabularyStateType.DIST.y_step
@@ -403,22 +357,33 @@ AY_START, AY_END, AY_RANGE, AY_STEP = VocabularyStateType.AY.start, VocabularySt
 def tokenize_data(data):
     """
     Convert data points into tokens based on specified ranges and steps.
+    Operates entirely on GPU using PyTorch tensor operations.
     
     Args:
-        data (np.ndarray): The data array to be tokenized.
+        data (torch.Tensor): The data tensor to be tokenized, assumed to be on GPU.
     
     Returns:
-        np.ndarray: The data array with tokenized values.
+        torch.Tensor: The tokenized data tensor.
     """
-    def calculate_token(value, value_range, start, step):
-        # Clamping the value within the range and calculating the token
-        value = np.maximum(value_range[0], np.minimum(value_range[1], value))
-        return start + int(round((value - value_range[0]) / step))
-    
-    # Tokenizing data only for specific token types
-    x, y = data[X_DIM], data[Y_DIM]
-    x_token = calculate_token(x, X_RANGE, X_START, X_STEP)
-    y_token = calculate_token(y, Y_RANGE, Y_START, Y_STEP)
-    
-    # TODO tokenized data. If it is not an agent, put padding token
-    return data
+    batch_size, num_agents, _ = data.shape
+    # Pre-allocate the output tensor on the same device (GPU) as the input data.
+    output = torch.empty(batch_size, num_agents, 10, device=data.device, dtype=torch.int32)
+
+    def calculate_token_tensor(value, value_range, start, step):
+        clamped = torch.clamp(value, min=value_range[0], max=value_range[1])
+        token = start + torch.round((clamped - value_range[0]) / step).to(torch.int32)
+        return token
+
+    # Tokenize each dimension attribute using vectorized operations.
+    output[..., 0] = calculate_token_tensor(data[..., X_DIM], X_RANGE, X_START, X_STEP)
+    output[..., 1] = calculate_token_tensor(data[..., Y_DIM], Y_RANGE, Y_START, Y_STEP)
+    output[..., 2] = calculate_token_tensor(data[..., DIST_DIM], DIST_RANGE, DIST_START, DIST_STEP)
+    output[..., 3] = calculate_token_tensor(data[..., YAW_DIM], YAW_RANGE, YAW_START, YAW_STEP)
+    output[..., 4] = calculate_token_tensor(data[..., VX_DIM], VX_RANGE, VX_START, VX_STEP)
+    output[..., 5] = calculate_token_tensor(data[..., VY_DIM], VY_RANGE, VY_START, VY_STEP)
+    output[..., 6] = calculate_token_tensor(data[..., AX_DIM], AX_RANGE, AX_START, AX_STEP)
+    output[..., 7] = calculate_token_tensor(data[..., AY_DIM], AY_RANGE, AY_START, AY_STEP)
+    output[..., 8] = calculate_token_tensor(data[..., WIDTH_DIM], WIDTH_RANGE, WIDTH_START, WIDTH_STEP)
+    output[..., 9] = calculate_token_tensor(data[..., LENGTH_DIM], LENGTH_RANGE, LENGTH_START, LENGTH_STEP)
+
+    return output

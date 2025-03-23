@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import resnet18
-from model.agent_state import VocabularyStateType
+from model.agent_state import *
 from typing import Callable, Dict, List, Optional, Tuple, Type, Union
 from gymnasium import spaces
 from stable_baselines3.common.policies import MultiInputActorCriticPolicy
@@ -72,13 +72,12 @@ class DQGAT(nn.Module):
     def __init__(self, bev_output_dim=512, node_embed_dim=128):
         super(DQGAT, self).__init__()
         self.cnn_encoder = ResNetEncoder(output_dim=bev_output_dim) 
-        # self.mlp_encoder = MLPNodeEncoder(input_dim=node_embed_dim, output_dim=node_embed_dim)  
-        self.mlp_encoder = MLPNodeEncoder(input_dim=12, output_dim=node_embed_dim)
+        self.mlp_encoder = MLPNodeEncoder(input_dim=node_embed_dim, output_dim=node_embed_dim)
         self.gat_encoder = nn.Sequential(
             MultiHeadSelfAttentionGAT(input_dim=bev_output_dim + node_embed_dim, output_dim=512),
             MultiHeadSelfAttentionGAT(input_dim=512, output_dim=256),
         )
-        # self.token_embedding = nn.Embedding(VocabularyStateType.PAD_TOKEN.vocal_size, node_embed_dim)
+        self.token_embedding = nn.Embedding(VocabularyStateType.PAD_TOKEN.vocal_size, node_embed_dim)
 
     def forward(self, bev_image, agent_feats):
         """
@@ -91,9 +90,8 @@ class DQGAT(nn.Module):
         batch_size, num_agents, _ = agent_feats.shape
         
         # Extract the BEV and agent features
-        bev_embedding = self.cnn_encoder(bev_image)                            # (batch_size, 512)
-        # node_features = self.mlp_encoder(self.token_embedding(agent_feats))  # (batch_size, num_agents, 128)
-        node_features = self.mlp_encoder(agent_feats)
+        bev_embedding = self.cnn_encoder(bev_image)  
+        node_features = self.mlp_encoder(self.token_embedding(tokenize_data(agent_feats)).mean(dim=2))  # (batch_size, num_agents, 128)
 
         # Expand bev_embedding to match agent count and concatenate
         bev_expanded = bev_embedding.unsqueeze(1).expand(-1, num_agents, -1)  

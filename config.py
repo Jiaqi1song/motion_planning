@@ -65,8 +65,8 @@ reward_params = {
         min_speed=0,  # km/h
         max_speed=30.0,  # km/h
         target_speed=15.0,  # kmh
-        max_distance=3.0,  # Max distance from center before terminating
-        max_std_center_lane=0.4,
+        max_distance=2.0,  # Max distance from center before terminating
+        max_std_center_lane=0.35,
         max_angle_center_lane=90,
         penalty_reward=-10,
     ),
@@ -98,7 +98,7 @@ _CONFIG_1 = {
     "state": states["3"],
     "vae_model": "vae_64",
     "action_smoothing": 0.75,
-    "reward_fn": "reward_fn5",
+    "reward_fn": "av_reward",
     "reward_params": reward_params["reward_fn_5_default"],
     "obs_res": (160, 80),
     "seed": 100,
