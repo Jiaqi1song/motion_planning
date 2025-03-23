@@ -75,6 +75,7 @@ class DQGAT(nn.Module):
         self.mlp_encoder = MLPNodeEncoder(input_dim=node_embed_dim, output_dim=node_embed_dim)
         self.gat_encoder = nn.Sequential(
             MultiHeadSelfAttentionGAT(input_dim=bev_output_dim + node_embed_dim, output_dim=512),
+            MultiHeadSelfAttentionGAT(input_dim=512, output_dim=512),
             MultiHeadSelfAttentionGAT(input_dim=512, output_dim=256),
         )
         self.token_embedding = nn.Embedding(VocabularyStateType.PAD_TOKEN.vocal_size, node_embed_dim)
