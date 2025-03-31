@@ -56,7 +56,7 @@ python train.py --config BEST --total_timesteps 100000 --map Town02
 
 Train the model using our method with:
 ```bash
-python my_train.py --config 1 --total_timesteps 100000 --map Town05
+python my_train.py --config 1 --total_timesteps 1000000 --map Town10HD
 ```
 
 The training results will be saved in the `tensorboard` folder. You can open it with:
