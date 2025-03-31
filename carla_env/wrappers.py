@@ -3,6 +3,7 @@ import numpy as np
 import weakref
 import time
 import math
+import random
 
 def get_actor_display_name(actor, truncate=250):
     name = " ".join(actor.type_id.replace("_", ".").title().split(".")[1:])
@@ -428,3 +429,54 @@ class World():
     def __getattr__(self, name):
         """Relay missing methods to underlying carla object"""
         return getattr(self.world, name)
+
+training_scenes_dict = {
+    "Int-Cross": dict(
+        intersection_routes=[153, 127],
+        vehicle_sp_pts=[95, 0, 1, 107, 110, 96, 101, 48, 47, 118, 115, 126, 55, 142, 111, 120, 131, 83, 109, 117, 124, 132]
+    ),
+    "Int-Left": dict(
+        intersection_routes=[126, 49],
+        vehicle_sp_pts=[95, 0, 1, 107, 110, 96, 101, 48, 47, 118, 115, 55, 142, 111, 120, 131, 83, 109, 117, 124, 132, 127, 119]
+    ),
+    "Int-Right": dict(
+        intersection_routes=[110, 24],
+        vehicle_sp_pts=[95, 0, 1, 107, 96, 101, 48, 118, 115, 55, 142, 111, 120, 131, 83, 109, 117, 124, 132, 119, 47, 127]
+    ),
+    "T-Merge": dict(
+        intersection_routes=[33, 73],
+        vehicle_sp_pts=[81, 128, 149, 73, 34, 100, 35, 162, 39, 40, 38, 37, 103, 92, 72, 20, 21, 18, 19, 53, 54, 41, 42, 134, 144, ]
+    ),
+    "T-Left": dict(
+        intersection_routes=[123, 69],
+        vehicle_sp_pts=[53, 54, 135, 78, 136, 70, 79, 92, 103, 37, 38, 40, 39, 143, 108, 147, 72, 81, 128, 149, 73, 121, 41, 42, 133]
+    ),
+    "Follow-Lane": dict(
+        intersection_routes=[76, 72],
+        vehicle_sp_pts=[77, 59, 65, 87, 139, 71, 98, 147, 143, 72, 68, 67, 64, 63, 90, 88, 154, 97, 61, 62, 79, 78, 70, 69]
+    ),
+}
+
+class training_scenes():
+    def __init__(self, map, training_scene_names):
+        self.map = map
+        self.ego_routes = []
+        self.vehicle_spawn_pts = []
+        self.names = []
+        for name in training_scene_names:
+            self.ego_routes.append(training_scenes_dict[name]["intersection_routes"])
+            self.vehicle_spawn_pts.append(training_scenes_dict[name]["vehicle_sp_pts"])
+            self.names.append(name)
+        assert len(self.ego_routes) == len(self.vehicle_spawn_pts)
+        self.num_scenes = len(self.ego_routes)
+        self.current_idx = 0
+    
+    def shuffle(self):
+        self.current_idx = random.randint(0, self.num_scenes - 1)
+    
+    def get_ego_routes(self):
+        return self.ego_routes[self.current_idx]
+    
+    def get_vehicle_spawn_pts(self):
+        return self.vehicle_spawn_pts[self.current_idx]
+        

@@ -10,7 +10,7 @@ from carla_env.wrappers import *
 
 
 class CarlaBirdView:
-    def __init__(self, host="127.0.0.1", port=2000, fps=15, start_carla=False):
+    def __init__(self, host="127.0.0.1", port=2000, fps=15, start_carla=False, map="Town05"):
         """
         A class for obtaining a bird's-eye view image of a running CARLA environment and painting the waypoints.
 
@@ -56,12 +56,14 @@ class CarlaBirdView:
             self.client.set_timeout(60.0)
 
             # Create world wrapper
-            self.world = World(self.client)
+            self.world = World(self.client, map)
+
 
             settings = self.world.get_settings()
             settings.fixed_delta_seconds = 1 / self.fps
             settings.synchronous_mode = True
             self.world.apply_settings(settings)
+            self.world.unload_map_layer(carla.MapLayer.Buildings)
             self.client.reload_world(False)  # reload map keeping the world settings
 
             self.spectator = self.world.get_spectator()
@@ -147,10 +149,11 @@ if __name__ == "__main__":
     argparser.add_argument("--host", default="localhost", type=str, help="IP of the host server (default: 127.0.0.1)")
     argparser.add_argument("--port", default=2000, type=int, help="TCP port to listen to (default: 2000)")
     argparser.add_argument("--fps", default=20, type=int, help="FPS. Delta time between samples is 1/FPS")
+    argparser.add_argument("--map", default="Town10HD", type=str, help="Carla map")
     args = argparser.parse_args()
 
     # Create vehicle and actors for data collecting
-    env = CarlaBirdView(host=args.host, port=args.port, fps=args.fps, start_carla=False)
+    env = CarlaBirdView(host=args.host, port=args.port, fps=args.fps, start_carla=False, map=args.map)
 
     render_route_waypoints = ()
 

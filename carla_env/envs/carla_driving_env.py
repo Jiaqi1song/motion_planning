@@ -16,6 +16,8 @@ import itertools
 from carla_env.navigation.planner import RoadOption, compute_route_waypoints
 from collections import deque
 import torch
+from carla_env.render_bev import generate_dynamic_bev_layer, generate_static_bev_map
+from wrappers import training_scenes
 
 def smooth_action(current, target, smoothing_factor):
     return current * smoothing_factor + target * (1 - smoothing_factor)
@@ -35,13 +37,7 @@ discrete_actions = {
     2: [1.0, 1.0],
     3: [0.0, 0.0],  # braking / stopping
 }
-# intersection_routes = itertools.cycle([(57, 81)])
-# town05:
-intersection_routes = itertools.cycle([(283, 66)])
 
-vehicle_sp_pts = [281, 135, 65, 101, 63, 140, 115, 114, 278, 260, 104, 287, 57, 128, 137, 60, 122, 97, 70, 6, 277, 41, 136, ]
-# eval_routes = itertools.cycle([(48, 21), (0, 72), (28, 83), (61, 39)])
-eval_routes = itertools.cycle([(283, 66)])
 class CarlaDrivingEnv(gym.Env):
     """
     Gym environment for autonomous driving in CARLA designed for DQ-GAT.
@@ -70,25 +66,31 @@ class CarlaDrivingEnv(gym.Env):
                  host="127.0.0.1",
                  port=2000,
                  fps=15,
-                 map='Town05',
+                 map='Town10HD',
                  action_space_type="discrete",  # "continuous" or "discrete"
                  reward_fn=None,
                  encode_state_fn=None,
                  decode_vae_fn=None,
                  action_smoothing=0.2,
                  eval=False,
-                 activate_render=True):
+                 activate_render=True, 
+                 training_scene_names=[]):
         super(CarlaDrivingEnv, self).__init__()
 
         # Connect to CARLA and set synchronous mode.
         self.client = carla.Client(host, port)
         self.client.set_timeout(10.0)
         self.world = World(self.client, map)
+        world_waypoints = self.world.map.generate_waypoints(0.1)
+        self.bev_base = generate_static_bev_map(world_waypoints)
         settings = self.world.get_settings()
         settings.fixed_delta_seconds = 1.0 / fps
         settings.synchronous_mode = True
         self.world.apply_settings(settings)
         self.client.reload_world(False)
+
+        self.traffic_manager = self.client.get_trafficmanager(8000)
+        self.train_scenes = training_scenes(map, training_scene_names)
 
         self.fps = fps
         self.map = map
@@ -124,7 +126,7 @@ class CarlaDrivingEnv(gym.Env):
         # Initialize actors.
         self.vehicle = None
         self.collision_sensor = None
-        self.bev_camera = None
+        # self.bev_camera = None
         self.bev_image = None
         self.collision_history = []
         self.step_count = 0
@@ -147,15 +149,7 @@ class CarlaDrivingEnv(gym.Env):
                                    on_collision_fn=lambda e: self._on_collision(e),
                                    on_invasion_fn=lambda e: self._on_invasion(e))
 
-        # Attach semantic segmentation BEV camera.
-        # We directly set the image size to 224x224.
-        self.bev_camera = Camera(
-            self.world, 224, 224,
-            transform=sensor_transforms["bev"],
-            attach_to=self.vehicle, on_recv_image=lambda e: self._set_observation_image(e),
-            camera_type="sensor.camera.semantic_segmentation",
-            custom_palette= True
-        )
+
         self.camera = Camera(self.world, width, height,
             transform=sensor_transforms["spectator"],
             attach_to=self.vehicle, on_recv_image=lambda e: self._set_viewer_image(e),
@@ -175,24 +169,24 @@ class CarlaDrivingEnv(gym.Env):
         self.collision_history.append(event)
         self.episode_ended = True
 
-    def _on_bev_image(self, image):
-        # For semantic segmentation sensor, the image is already 224x224.
-        array = np.frombuffer(image.raw_data, dtype=np.uint8)
-        array = array.reshape((image.height, image.width, 4))
-        self.bev_image = array[:, :, :3]  # drop alpha
+    # def _on_bev_image(self, image):
+    #     # For semantic segmentation sensor, the image is already 224x224.
+    #     array = np.frombuffer(image.raw_data, dtype=np.uint8)
+    #     array = array.reshape((image.height, image.width, 4))
+    #     self.bev_image = array[:, :, :3]  # drop alpha
 
-    def _process_bev_image(self, image):
-        """
-        Since the sensor directly outputs a 224x224 image, we only need to convert
-        from HWC to CHW and cast to float32.
-        """
-        chw = np.transpose(image, (2, 0, 1))
-        chw = np.expand_dims(chw, axis=0)
-        return chw.astype(np.float32)
+    # def _process_bev_image(self, image):
+    #     """
+    #     Since the sensor directly outputs a 224x224 image, we only need to convert
+    #     from HWC to CHW and cast to float32.
+    #     """
+    #     chw = np.transpose(image, (2, 0, 1))
+    #     chw = np.expand_dims(chw, axis=0)
+    #     return chw.astype(np.float32)
 
     def get_agent_features(self):
         """
-        Returns an array (shape: (1, 20, 12)) of agent features.
+        Returns an array (shape: (1, 20, 10)) of agent features.
         Each row is a NpSequenceArray with:
         [x, y, d, psi, v_x, v_y, a_x, a_y, w, l, class_type, token_type]
         Coordinates and kinematics are expressed in the ego-vehicle's frame.
@@ -311,7 +305,7 @@ class CarlaDrivingEnv(gym.Env):
             idx = np.argsort(distances)[:max_agents]
             features = features[idx]
         
-        # Add a new axis so the final shape is (1, 20, 12).
+        # Add a new axis so the final shape is (1, 20, 10).
         features = np.expand_dims(features, axis=0)
         # print("Final features shape:", features.shape)
         # print(features)
@@ -345,18 +339,6 @@ class CarlaDrivingEnv(gym.Env):
         # Tick game
         self.world.tick()
         self.step_count += 1
-        self.observation = self._get_observation()
-        self.viewer_image = self._get_viewer_image()
-        # timeout = time.time() + 1.0
-        # while self.bev_image is None and time.time() < timeout:
-        #     time.sleep(0.01)
-        # raw_bev = self.bev_image if self.bev_image is not None else np.zeros((224, 224, 3), dtype=np.uint8)
-        # bev_obs = self._process_bev_image(raw_bev)
-        agent_feats = self.get_agent_features()
-        observation = {
-            "bev_image": torch.from_numpy(self.observation), 
-            "agent_feats": torch.from_numpy(agent_feats)
-        }
 
 
         # Get vehicle transform
@@ -376,6 +358,13 @@ class CarlaDrivingEnv(gym.Env):
             else:
                 break
         self.current_waypoint_index = waypoint_index
+        self.observation = self._get_observation()
+        self.viewer_image = self._get_viewer_image()
+        agent_feats = self.get_agent_features()
+        observation = {
+            "bev_image": torch.from_numpy(self.observation), 
+            "agent_feats": torch.from_numpy(agent_feats)
+        }
 
         # Check for route completion
         if self.current_waypoint_index < len(self.route_waypoints) - 1:
@@ -458,7 +447,7 @@ class CarlaDrivingEnv(gym.Env):
         self.lidar_data = self.lidar_data_buffer = None
         self.episode_ended = False 
         self.step_count = 0
-
+        self.train_scenes.shuffle()
         # Init metrics
         self.total_reward = 0.0
         self.previous_location = self.vehicle.get_transform().location
@@ -523,9 +512,10 @@ class CarlaDrivingEnv(gym.Env):
         # Remove the batch dimension (from (1, 3, 224, 224) to (3, 224, 224))
         self.viewer_image = self._draw_path(self.camera, self.viewer_image)
         self.display.blit(pygame.surfarray.make_surface(self.viewer_image.swapaxes(0, 1)), (0, 0))
-        img = np.squeeze(self.observation, axis=0)
-        # Transpose to (224, 224, 3)
+        img = self.observation
         img = np.transpose(img, (1, 2, 0))
+
+        
 
         # Define pos_observation: place image at top-right with a 10-pixel margin.
         display_width, display_height = self.display.get_size()
@@ -533,16 +523,7 @@ class CarlaDrivingEnv(gym.Env):
         pos_observation = (display_width - img_width - 10, 10)
 
         # Now create a surface and blit the image at pos_observation.
-        self.display.blit(pygame.surfarray.make_surface(img), pos_observation)
-        # pos_vae_decoded = (self.display.get_size()[0] - 2 * obs_w - 10, 10)
-        # if self.decode_vae_fn:
-        #     self.display.blit(pygame.surfarray.make_surface(self.observation_decoded.swapaxes(0, 1)), pos_vae_decoded)
-
-        # if self.activate_lidar:
-        #     lidar_h, lidar_w = self.lidar_data.shape[:2]
-        #     pos_lidar = (self.display.get_size()[0] - obs_w - 10, 100)
-        #     self.display.blit(pygame.surfarray.make_surface(self.lidar_data.swapaxes(0, 1)), pos_lidar)
-
+        self.display.blit(pygame.surfarray.make_surface(np.transpose(img, (1, 0, 2))), pos_observation)
         # Render HUD
         self.hud.render(self.display, extra_info=self.extra_info)
         self.extra_info = []  # Reset extra info list
@@ -552,26 +533,23 @@ class CarlaDrivingEnv(gym.Env):
 
     def close(self):
         print("closing triggered")
-        # if self.vehicle is not None:
-        #     self.vehicle.destroy()
-        # if self.collision_sensor is not None:
-        #     self.collision_sensor.destroy()
-        # if self.bev_camera is not None:
-        #     self.bev_camera.destroy()
-        # if self.camera is not None:
-        #     self.camera.destroy()
+        if self.vehicle is not None:
+            self.vehicle.destroy()
+        if self.collision_sensor is not None:
+            self.collision_sensor.destroy()
+        if self.camera is not None:
+            self.camera.destroy()
         # pygame.quit()
         # self.world.apply_settings(carla.WorldSettings())
     
     def _get_observation(self):
-        while self.observation_buffer is None:
-            pass
-        obs = self.observation_buffer.copy()
-        self.observation_buffer = None
-        return obs
+        #generate image
+        # print(self.route_waypoints)
+        waypoints = [wp for wp, _ in self.route_waypoints]
+        self.observation = generate_dynamic_bev_layer(self.world, self.vehicle, self.bev_base, waypoints[self.current_waypoint_index:])
+        return self.observation
+
     
-    def _set_observation_image(self, image):
-        self.observation_buffer = self._process_bev_image(image)
 
     def _clear_vehicles(self):
         actors = self.world.get_actors().filter("vehicle.*")
@@ -584,7 +562,7 @@ class CarlaDrivingEnv(gym.Env):
 
         spawn_points = self.world.get_map().get_spawn_points()
         # Filter out indices that are out of range.
-        valid_indices = [i for i in vehicle_sp_pts if i < len(spawn_points)]
+        valid_indices = [i for i in self.train_scenes.get_vehicle_spawn_pts() if i < len(spawn_points)]
         
         # Select spawn points based on the provided indices.
         available_spawn_points = [spawn_points[i] for i in valid_indices]
@@ -614,7 +592,21 @@ class CarlaDrivingEnv(gym.Env):
                     .then(carla.command.SetAutopilot(carla.command.FutureActor, True))
                 )
         
-        self.client.apply_batch_sync(batch, True)
+        responses = self.client.apply_batch_sync(batch, True)
+        vehicles_list = []
+        for response in responses:
+            if not response.error:
+                vehicle = self.world.get_actor(response.actor_id)
+                if vehicle is not None:
+                    vehicles_list.append(vehicle)
+        
+        # Configure each vehicle with dangerous driving behaviors.
+        for vehicle in vehicles_list:
+            self.traffic_manager.distance_to_leading_vehicle(vehicle, 0.1)
+            self.traffic_manager.ignore_lights_percentage(vehicle, 100)
+            self.traffic_manager.ignore_signs_percentage(vehicle, 100)
+            self.traffic_manager.vehicle_percentage_speed_difference(vehicle, -200)
+
     
     def new_route(self):
         # Do a soft reset (teleport vehicle)
@@ -625,11 +617,11 @@ class CarlaDrivingEnv(gym.Env):
         # Generate waypoints along the lap
         if not self.eval:
             # if self.episode_idx % 2 == 0 and self.num_routes_completed == -1:
-            spawn_points_list = [self.world.map.get_spawn_points()[index] for index in next(intersection_routes)]
+            spawn_points_list = [self.world.map.get_spawn_points()[index] for index in self.train_scenes.get_ego_routes()]
             # else:
             #     spawn_points_list = np.random.choice(self.world.map.get_spawn_points(), 2, replace=False)
         else:
-            spawn_points_list = [self.world.map.get_spawn_points()[index] for index in next(eval_routes)]
+            spawn_points_list = [self.world.map.get_spawn_points()[index] for index in self.train_scenes.get_ego_routes()]
         route_length = 1
         while route_length <= 1:
             self.start_wp, self.end_wp = [self.world.map.get_waypoint(spawn.location) for spawn in

@@ -102,7 +102,8 @@ _CONFIG_1 = {
     "reward_params": reward_params["reward_fn_5_default"],
     "obs_res": (160, 80),
     "seed": 100,
-    "wrappers": []
+    "wrappers": [],
+    "training_scenes": ["Int-Cross", "Int-Left", "Int-Right", "T-Merge", "T-Left", "Follow-Lane"]
 }
 
 _CONFIG_2 = {

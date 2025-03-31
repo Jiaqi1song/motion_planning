@@ -7,7 +7,6 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import argparse
 import config
 import time
-
 parser = argparse.ArgumentParser(description="Trains a CARLA agent")
 parser.add_argument("--host", default="localhost", type=str, help="IP of the host server (default: 127.0.0.1)")
 parser.add_argument("--port", default=2000, type=int, help="TCP port to listen to (default: 2000)")
@@ -47,10 +46,6 @@ if CONFIG["algorithm"] not in algorithm_dict:
     raise ValueError("Invalid algorithm name")
 
 AlgorithmRL = algorithm_dict[CONFIG["algorithm"]]
-# vae = None
-# if CONFIG["vae_model"]:
-#     vae = load_vae(f'./vae/log_dir/{CONFIG["vae_model"]}', LSIZE)
-# observation_space, encode_state_fn, decode_vae_fn = create_encode_state_fn(vae, CONFIG["state"])
 dqgat_model = DQGAT()
 encode_state_fn = encode_state_dqgat(dqgat_model)
 
@@ -58,7 +53,8 @@ env = CarlaDrivingEnv(host=args["host"], port=args["port"],
                     reward_fn=reward_functions[CONFIG["reward_fn"]],
                     encode_state_fn=encode_state_fn, 
                     fps=args["fps"], action_smoothing=CONFIG["action_smoothing"],
-                    action_space_type='continuous', activate_render=args["no_render"], map=args["map"])
+                    action_space_type='continuous', activate_render=args["no_render"], map=args["map"],
+                    training_scene_names=CONFIG["training_scenes"])
 
 for wrapper_class_str in CONFIG["wrappers"]:
     wrap_class, wrap_params = parse_wrapper_class(wrapper_class_str)
