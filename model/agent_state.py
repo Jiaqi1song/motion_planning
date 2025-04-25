@@ -341,7 +341,7 @@ def within_valid_range(data, valid_range):
 
 X_START, X_END, X_RANGE, X_STEP = VocabularyStateType.X.start, VocabularyStateType.X.end, VocabularyStateType.X.x_range, VocabularyStateType.X.x_step
 Y_START, Y_END, Y_RANGE, Y_STEP = VocabularyStateType.Y.start, VocabularyStateType.Y.end, VocabularyStateType.Y.y_range, VocabularyStateType.Y.y_step
-DIST_START, DIST_END, DIST_RANGE, DIST_STEP = VocabularyStateType.DIST.start, VocabularyStateType.DIST.end, VocabularyStateType.DIST.y_range, VocabularyStateType.DIST.y_step
+DIST_START, DIST_END, DIST_RANGE, DIST_STEP = VocabularyStateType.DIST.start, VocabularyStateType.DIST.end, VocabularyStateType.DIST.dist_range, VocabularyStateType.DIST.dist_step
 YAW_START, YAW_END, YAW_RANGE, YAW_STEP = VocabularyStateType.YAW.start, VocabularyStateType.YAW.end, VocabularyStateType.YAW.yaw_range, VocabularyStateType.YAW.yaw_step
 WIDTH_START, WIDTH_END, WIDTH_RANGE, WIDTH_STEP = VocabularyStateType.WIDTH.start, VocabularyStateType.WIDTH.end, VocabularyStateType.WIDTH.width_range, VocabularyStateType.WIDTH.width_step
 LENGTH_START, LENGTH_END, LENGTH_RANGE, LENGTH_STEP = VocabularyStateType.LENGTH.start, VocabularyStateType.LENGTH.end, VocabularyStateType.LENGTH.length_range, VocabularyStateType.LENGTH.length_step
@@ -370,12 +370,17 @@ def tokenize_data(data):
     output = np.zeros((batch_size, num_agents, 10), dtype=np.int32)
 
     def calculate_token(value, value_range, start, end, step):
-        # Clamp the value within the range and calculate the token.
-        value = np.maximum(value_range[0], np.minimum(value_range[1], value))
-        token = start + int(round((value - value_range[0]) / step))
-        token = min(max(start, token), end)
+        # Clamp the value within the specified range
+        value = np.clip(value, value_range[0], value_range[1])
+        
+        # Compute token(s)
+        token = start + np.round((value - value_range[0]) / step).astype(int)
+        
+        # Clamp tokens to valid range
+        token = np.clip(token, start, end)
+        
         return token
-    
+        
     # Loop over the batch and agents to tokenize data.
     for bs in range(batch_size):
         for n in range(num_agents):

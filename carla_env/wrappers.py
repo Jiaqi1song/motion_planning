@@ -455,6 +455,18 @@ training_scenes_dict = {
         intersection_routes=[76, 72],
         vehicle_sp_pts=[77, 59, 65, 87, 139, 71, 98, 147, 143, 72, 68, 67, 64, 63, 90, 88, 154, 97, 61, 62, 79, 78, 70, 69]
     ),
+    "Int-Cross-Eval-Dense": dict(
+        intersection_routes=[153, 127],
+        vehicle_sp_pts=[95, 107, 110, 96, 101, 48, 47, 118, 115, 126, 55, 142, 111, 120, 131, 83, 109, 117, 124, 132 , 106, 102]
+    ),
+    "Roundabouts": dict(
+        intersection_routes=[218, 250],
+        vehicle_sp_pts=[219, 233, 232, 230, 41, 42, 38, 211, 210, 112, 113, 245, 221, 187, 249, 229, 8, 85, 162, 208, 105, 149, 114]
+    ),
+    "Long-journey": dict(
+        intersection_routes=[97, 92],
+        vehicle_sp_pts=[19, 6, 112, 146, 283, 100, 101, 142, 260, 57, 58, 65, 44, 43, 240, 3, 153, 154, 53, 22, 21,294, 295, ]
+    ),
 }
 
 class training_scenes():

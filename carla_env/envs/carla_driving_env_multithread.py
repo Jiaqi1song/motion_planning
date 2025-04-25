@@ -293,7 +293,7 @@ class CarlaDrivingEnv(gym.Env):
             features = features[idx]
         
         # Add a new axis so the final shape is (1, 20, 10).
-        features = np.expand_dims(features, axis=0)
+        # features = np.expand_dims(features, axis=0)
         # print("Final features shape:", features.shape)
         # print(features)
         return features
@@ -348,12 +348,8 @@ class CarlaDrivingEnv(gym.Env):
         self.observation = self._get_observation()
         self.viewer_image = self._get_viewer_image()
         agent_feats = self.get_agent_features()
-        bev = self.observation.astype(np.float32) / 255.0 
-        IMAGENET_MEAN = np.array([0.485, 0.456, 0.406]).reshape(3, 1, 1)
-        IMAGENET_STD  = np.array([0.229, 0.224, 0.225]).reshape(3, 1, 1)
-        bev_normalized = (bev - IMAGENET_MEAN) / IMAGENET_STD
         observation = {
-            "bev_image": bev_normalized, 
+            "bev_image": self.observation, 
             "agent_feats": agent_feats
         }
 
@@ -390,12 +386,12 @@ class CarlaDrivingEnv(gym.Env):
         self.last_reward = self.reward_fn(self)
         self.total_reward += self.last_reward
 
-        if self.activate_render:
-            pygame.event.pump()
-            if pygame.key.get_pressed()[K_ESCAPE]:
-                self.close()
-                self.terminal_state = True
-            self.render()
+        # if self.activate_render:
+        #     pygame.event.pump()
+        #     if pygame.key.get_pressed()[K_ESCAPE]:
+        #         self.close()
+        #         self.terminal_state = True
+        #     self.render()
 
 
         info = {
@@ -408,13 +404,13 @@ class CarlaDrivingEnv(gym.Env):
             'mean_reward': (self.total_reward / self.step_count)
         }
 
-        if self.activate_render:
-            for event in pygame.event.get():
-                if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
-                    self.close()
-                    done = True
-            self.render(mode="human")
-            self.clock.tick(self.fps)
+        # if self.activate_render:
+        #     for event in pygame.event.get():
+        #         if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
+        #             self.close()
+        #             done = True
+        #     self.render(mode="human")
+        #     self.clock.tick(self.fps)
 
         # encoded_obs = self.encode_state_fn(observation).detach().cpu().numpy()
         return observation, self.last_reward, self.terminal_state or self.success_state or self.collided, info
@@ -451,12 +447,8 @@ class CarlaDrivingEnv(gym.Env):
 
         self.observation = self._get_observation()
         agent_feats = self.get_agent_features()
-        bev = self.observation.astype(np.float32) / 255.0 
-        IMAGENET_MEAN = np.array([0.485, 0.456, 0.406]).reshape(3, 1, 1)
-        IMAGENET_STD  = np.array([0.229, 0.224, 0.225]).reshape(3, 1, 1)
-        bev_normalized = (bev - IMAGENET_MEAN) / IMAGENET_STD
         observation = {
-            "bev_image": bev_normalized, 
+            "bev_image": self.observation, 
             "agent_feats": agent_feats
         }
         return observation
@@ -545,7 +537,6 @@ class CarlaDrivingEnv(gym.Env):
         # print(self.route_waypoints)
         waypoints = [wp for wp, _ in self.route_waypoints]
         self.observation = generate_dynamic_bev_layer(self.world, self.vehicle, self.bev_base, waypoints[self.current_waypoint_index:])
-
         return self.observation
 
     

@@ -1,6 +1,7 @@
 import os
 import gym
 import numpy as np
+
 import carla
 import random
 import math
@@ -18,6 +19,14 @@ from collections import deque
 import torch
 from carla_env.render_bev import generate_dynamic_bev_layer, generate_static_bev_map
 from wrappers import training_scenes
+import sys
+sys.path.append('C:\\Users\\Cao\\Desktop\\SP25\\18744\\CARLA_0.9.13\\WindowsNoEditor\\PythonAPI')
+sys.path.append("C:\\Users\\Cao\\Desktop\\SP25\\18744\\CARLA_0.9.13\\WindowsNoEditor\\PythonAPI\\carla")
+sys.path.append('C:\\Users\\Cao\\Desktop\\SP25\\18744\\CARLA_0.9.13\\WindowsNoEditor\\PythonAPI\\carlaagents')
+from agents.navigation.basic_agent import BasicAgent
+from agents.navigation.behavior_agent import BehaviorAgent
+from carla_env.envs.carla_recorder import CarlaRecorder
+
 
 def smooth_action(current, target, smoothing_factor):
     return current * smoothing_factor + target * (1 - smoothing_factor)
@@ -38,7 +47,7 @@ discrete_actions = {
     3: [0.0, 0.0],  # braking / stopping
 }
 
-class CarlaDrivingEnv(gym.Env):
+class CarlaAutoPilotEnv(gym.Env):
     """
     Gym environment for autonomous driving in CARLA designed for DQ-GAT.
     
@@ -75,7 +84,7 @@ class CarlaDrivingEnv(gym.Env):
                  eval=False,
                  activate_render=True, 
                  training_scene_names=[]):
-        super(CarlaDrivingEnv, self).__init__()
+        super(CarlaAutoPilotEnv, self).__init__()
 
         # Connect to CARLA and set synchronous mode.
         self.client = carla.Client(host, port)
@@ -87,8 +96,7 @@ class CarlaDrivingEnv(gym.Env):
         settings.fixed_delta_seconds = 1.0 / fps
         settings.synchronous_mode = True
         self.world.apply_settings(settings)
-        self.client.reload_world(False)
-
+        # self.recorder = CarlaRecorder("carla_logs/teacher.hdf5")
         self.traffic_manager = self.client.get_trafficmanager(8000)
         self.train_scenes = training_scenes(map, training_scene_names)
 
@@ -100,7 +108,7 @@ class CarlaDrivingEnv(gym.Env):
         self.max_distance = 3000
         self.eval = eval
         self.activate_render = activate_render
-
+        self.teacher_percent = 0.8
         # Custom hooks.
         self.reward_fn = reward_fn if callable(reward_fn) else self.default_reward_fn
         self.encode_state_fn = encode_state_fn if callable(encode_state_fn) else (lambda obs: obs)
@@ -108,9 +116,9 @@ class CarlaDrivingEnv(gym.Env):
 
         # Define action space.
         if self.action_space_type == "continuous":
-            self.action_space = spaces.Box(low=np.array([-1.0, 0.0]),
-                                           high=np.array([1.0, 1.0]),
-                                           dtype=np.float32)
+            self.action_space = spaces.Box(low=np.array([-1.0, 0.0, 0.0]),
+                                        high=np.array([1.0, 1.0, 1.0]),
+                                            dtype=np.float32)
         elif self.action_space_type == "discrete":
             self.action_space = spaces.Discrete(len(discrete_actions))
         else:
@@ -148,8 +156,10 @@ class CarlaDrivingEnv(gym.Env):
         self.vehicle = Vehicle(self.world, self.world.map.get_spawn_points()[0],
                                    on_collision_fn=lambda e: self._on_collision(e),
                                    on_invasion_fn=lambda e: self._on_invasion(e))
-
-
+        self.agent = BehaviorAgent(self.vehicle,'cautious')
+        self.agent.ignore_traffic_lights()
+        # self.agent.ignore_traffic_lights = True
+        self.agent._behavior.light_ignore_percentage = 100
         self.camera = Camera(self.world, width, height,
             transform=sensor_transforms["spectator"],
             attach_to=self.vehicle, on_recv_image=lambda e: self._set_viewer_image(e),
@@ -297,8 +307,43 @@ class CarlaDrivingEnv(gym.Env):
         # print("Final features shape:", features.shape)
         # print(features)
         return features
+    
+    def get_teacher_action(self):
+        if self.agent.done():
+            # print("done!")
+            self.success_state = True
+            return None
+        ctrl = self.agent.run_step()
+        if ctrl.gear <= 0:
+            ctrl.gear = 1
+            ctrl.manual_gear_shift = False
+        return np.array([ctrl.steer, ctrl.throttle, ctrl.brake], dtype=np.float32)
 
+    def _apply_teacher_action(self):
+        if self.agent.done():
+            # print("done!")
+            self.terminal_state = True
+            return None
+        # 1. ask the BehaviourAgent
+        ctrl = self.agent.run_step()
 
+        # 2. unlock the car
+        ctrl.hand_brake = False
+        if ctrl.gear <= 0:          # N or R  →  Drive
+            ctrl.gear = 1
+            ctrl.manual_gear_shift = False
+
+        # 3. **write every field into the wrapper’s shadow object**
+        self.vehicle.control.steer      = ctrl.steer
+        self.vehicle.control.throttle   = ctrl.throttle
+        self.vehicle.control.brake      = ctrl.brake
+        self.vehicle.control.hand_brake = ctrl.hand_brake
+        self.vehicle.control.gear       = ctrl.gear
+        self.vehicle.control.manual_gear_shift = ctrl.manual_gear_shift
+
+        # 4. (do NOT call actor.apply_control here – wrapper will do that next tick)
+        return np.array([ctrl.steer, ctrl.throttle, ctrl.brake], dtype=np.float32)
+    
     def step(self, action):
         """
         Executes one simulation step.
@@ -306,23 +351,46 @@ class CarlaDrivingEnv(gym.Env):
         For discrete actions, action is an index mapping to [steer, throttle] in discrete_actions.
         Action smoothing is applied.
         """
-
-        if action is not None:
+        # teacher_act = self._apply_teacher_action()
+        teacher_act = self.get_teacher_action()
+        if teacher_act is None:
+            self.terminal_state = True
+        self.world.tick()  
+        # v = self.vehicle.get_velocity()
+        # c = self.vehicle.get_control()
+        			
+        if action is not None and teacher_act is not None:
             # Create new route on route completion
             if self.current_waypoint_index >= len(self.route_waypoints) - 1:
-                if not self.eval:
-                    self.new_route()
-                else:
-                    self.success_state = True
+                # if not self.eval:
+                #     self.new_route()
+                # else:
+                #     self.success_state = True
+                self.success_state = True
 
             if self.action_space_type == "continuous":
-                steer, throttle = [float(a) for a in action]
+                my_act = self.teacher_percent * teacher_act + (1 - self.teacher_percent) * action 
+                # my_act=teacher_act
+                steer, throttle, brake = [float(a) for a in my_act]
             elif self.action_space_type == "discrete":
                 steer, throttle = discrete_actions[action]
+                brake = 0.0
+            # print(throttle, brake)
+            if brake < 0.1:
+                brake = 0.0
+            self.vehicle.control.gear = 1
+            self.vehicle.control.manual_gear_shift = False
+            # self.vehicle.control.steer = smooth_action(self.vehicle.control.steer, steer, self.action_smoothing)
+            # self.vehicle.control.throttle = smooth_action(self.vehicle.control.throttle, throttle,
+            #                                               self.action_smoothing)
+            # self.vehicle.control.brake    = brake
+            self.vehicle.control.steer = steer
+            self.vehicle.control.throttle = throttle
+            self.vehicle.control.brake    = brake
+            self.vehicle.apply_control(self.vehicle.control)
 
-            self.vehicle.control.steer = smooth_action(self.vehicle.control.steer, steer, self.action_smoothing)
-            self.vehicle.control.throttle = smooth_action(self.vehicle.control.throttle, throttle,
-                                                          self.action_smoothing)
+
+            
         # Tick game
         self.world.tick()
         self.step_count += 1
@@ -382,14 +450,20 @@ class CarlaDrivingEnv(gym.Env):
         self.speed_accum += self.vehicle.get_speed()
         # Terminal on max distance
         if self.distance_traveled >= self.max_distance and not self.eval:
-            self.success_state = True
+            self.terminal_state = True
 
         self.distance_from_center_history.append(self.distance_from_center)
 
         # Call external reward fn
         self.last_reward = self.reward_fn(self)
         self.total_reward += self.last_reward
-
+        # if self.recorder is not None and teacher_act is not None:
+        #     bev_u8     = self.observation
+        #     assert bev_u8.dtype == np.uint8
+        #     assert bev_u8.min() >= 0 and bev_u8.max() <= 255
+        #     act_to_log = teacher_act
+        #     agents_f32 = agent_feats[0].astype(np.float32)
+        #     self.recorder.add(bev_u8, agents_f32, act_to_log)
         if self.activate_render:
             pygame.event.pump()
             if pygame.key.get_pressed()[K_ESCAPE]:
@@ -420,6 +494,7 @@ class CarlaDrivingEnv(gym.Env):
         return observation, self.last_reward, self.terminal_state or self.success_state or self.collided, info
 
     def reset(self):
+        # self.recorder.start_episode()
         # Create new route
         self._clear_vehicles()
         self._spawn_vehicles() 
@@ -527,6 +602,8 @@ class CarlaDrivingEnv(gym.Env):
         pygame.display.flip()
 
     def close(self):
+        # if self.recorder is not None:
+        #     self.recorder.close()
         if self.activate_render:
             pygame.quit()
         if self.vehicle:    self.vehicle.destroy()
@@ -600,10 +677,10 @@ class CarlaDrivingEnv(gym.Env):
                     vehicles_list.append(vehicle)
         
         # Configure each vehicle with dangerous driving behaviors.
-        for vehicle in vehicles_list:
+        # for vehicle in vehicles_list:
             # self.traffic_manager.distance_to_leading_vehicle(vehicle, 0.1)
-            self.traffic_manager.ignore_lights_percentage(vehicle, 100)
-            self.traffic_manager.ignore_signs_percentage(vehicle, 100)
+            # self.traffic_manager.ignore_lights_percentage(vehicle, 100)
+            # self.traffic_manager.ignore_signs_percentage(vehicle, 100)
             # self.traffic_manager.vehicle_percentage_speed_difference(vehicle, -200)
 
     
@@ -631,12 +708,22 @@ class CarlaDrivingEnv(gym.Env):
                 spawn_points_list = np.random.choice(self.world.map.get_spawn_points(), 2, replace=False)
 
         self.distance_from_center_history = deque(maxlen=30)
+        self.agent.set_global_plan(self.route_waypoints)
+        # self.agent.ignore_traffic_lights(True)
 
+        # self.agent._local_planner._traffic_light_manager._ignore_traffic_light = True
+        # self.agent._behavior.ignore_traffic_lights = True
+        self.agent._skip_waypoints   = 0       # don't skip
         self.current_waypoint_index = 0
         self.num_routes_completed += 1
         self.vehicle.set_transform(self.start_wp.transform)
+        self.world.tick()
+        # self.agent.set_destination(self.end_wp.transform.location)
+        self.agent.set_target_speed(25)
         time.sleep(0.2)
         self.vehicle.set_simulate_physics(True)
+        self.vehicle.apply_control(carla.VehicleControl(hand_brake=False))
+        self.world.tick()      
     
     def _on_invasion(self, event):
         lane_types = set(x.type for x in event.crossed_lane_markings)

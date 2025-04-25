@@ -1,171 +1,219 @@
+#!/usr/bin/env python3
+"""
+Draw every spawn point in the map and (optionally) the driving route
+between two spawn indices as a red poly-line.  All primitives stay
+on screen for 60 s so you have time to look around.
+
+Run:
+    python carla_birdview.py --map Town05 --route 97 92
+"""
+
+import argparse
 import math
 import os
 import subprocess
-import argparse
-import carla
+import sys
 import time
+from typing import List, Optional
 
-from carla_env.navigation.planner import compute_route_waypoints
-from carla_env.wrappers import *
-
-
-class CarlaBirdView:
-    def __init__(self, host="127.0.0.1", port=2000, fps=15, start_carla=False, map="Town05"):
-        """
-        A class for obtaining a bird's-eye view image of a running CARLA environment and painting the waypoints.
-
-        Parameters:
-            - host (str): IP address of the CARLA host
-            - port (int): Port used to connect to CARLA
-            - viewer_res (tuple[int, int]): Resolution of the spectator camera as a (width, height) tuple
-            - fps (int): FPS of the client. If fps <= 0 then use unbounded FPS.
-            - start_carla (bool): Whether to automatically start CARLA when True. Note that you need to set the environment
-            variable ${CARLA_ROOT} to point to the CARLA root directory for this option to work.
-        """
-
-        # Start CARLA from CARLA_ROOT
-        self.carla_process = None
-        if start_carla:
-            if "CARLA_ROOT" not in os.environ:
-                raise Exception("${CARLA_ROOT} has not been set!")
-            carla_path = os.path.join(os.environ["CARLA_ROOT"], "CarlaUE4.sh")
-            launch_command = [carla_path]
-            launch_command += ['-quality_level=Low']
-            launch_command += ['-benchmark']
-            launch_command += ["-fps=%i" % fps]
-            # launch_command += ['-RenderOffScreen']
-            launch_command += ['-prefernvidia']
-            print("Running command:")
-            print(" ".join(launch_command))
-            self.carla_process = subprocess.Popen(launch_command, stdout=subprocess.DEVNULL)
-            print("Waiting for CARLA to initialize")
-
-            # ./CarlaUE4.sh -quality_level=Low -benchmark -fps=15 -RenderOffScreen
-            time.sleep(5)
-
-        # Setup gym environment
-        self.fps = fps
-
-        self.done = False
-        self.extra_info = []
-        self.world = None
-        self.route_waypoints = None
-        try:
-            # Connect to carla
-            self.client = carla.Client(host, port)
-            self.client.set_timeout(60.0)
-
-            # Create world wrapper
-            self.world = World(self.client, map)
+import carla
 
 
-            settings = self.world.get_settings()
-            settings.fixed_delta_seconds = 1 / self.fps
+# ──────────────────────────────────────────────────────────────────────────────
+# Helper: launch CARLA locally (Linux / macOS).  Comment out if not needed.
+# ──────────────────────────────────────────────────────────────────────────────
+# def _launch_carla(fps: int) -> subprocess.Popen:
+#     carla_root = os.environ.get("CARLA_ROOT")
+#     if not carla_root:
+#         print("ERROR: Set $CARLA_ROOT or launch CARLA manually.", file=sys.stderr)
+#         sys.exit(1)
+
+#     exe = os.path.join(carla_root, "CarlaUE4.sh")
+#     cmd = [
+#         exe,
+#         "-quality_level=Low",
+#         "-benchmark",
+#         f"-fps={fps}",
+#         "-prefernvidia",
+#     ]
+#     print("Starting CARLA:\n ", " ".join(cmd))
+#     return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Main bird-view drawer
+# ──────────────────────────────────────────────────────────────────────────────
+class BirdViewDrawer:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 2000,
+        town: str = "Town05",
+        fps: int = 20,
+        carla_proc: Optional[subprocess.Popen] = None,
+    ):
+        self.carla_proc = carla_proc
+
+        # Connect
+        self.client = carla.Client(host, port)
+        self.client.set_timeout(20.0)
+
+        # Load map (only if the running server is on another map)
+        if self.client.get_world().get_map().name != town:
+            self.client.load_world(town)
+        self.world = self.client.get_world()
+
+        # Put the server into synchronous mode
+        settings = self.world.get_settings()
+        if not settings.synchronous_mode or settings.fixed_delta_seconds == 0:
             settings.synchronous_mode = True
+            settings.fixed_delta_seconds = 1.0 / fps
             self.world.apply_settings(settings)
-            self.world.unload_map_layer(carla.MapLayer.Buildings)
-            self.client.reload_world(False)  # reload map keeping the world settings
 
-            self.spectator = self.world.get_spectator()
-            self.spectator.set_transform(sensor_transforms["birdview"])
-        except Exception as e:
-            self.close()
-            raise e
+        # Move the spectator straight above spawn point 0
+        self._set_birdview()
 
-    def close(self):
-        if self.carla_process:
-            self.carla_process.terminate()
-        if self.world is not None:
-            self.world.destroy()
-        self.closed = True
+        # Convenience handle
+        self.debug = self.world.debug
+        print(f"Connected to {town} | {len(self.world.get_map().get_spawn_points())} spawn points")
 
-    def render(self):
-        for i, point in enumerate(self.world.map.get_spawn_points()):
-            begin = point.location + carla.Location(z=1.25)
-            angle = math.radians(point.rotation.yaw)
-            sign_x = -np.sin(angle)
-            sign_y = np.cos(angle)
-            end = begin + carla.Location(x=math.cos(angle), y=math.sin(angle))
-            self.world.debug.draw_arrow(begin, end, arrow_size=1, life_time=0, thickness=0.5, color=carla.Color(255, 0, 0))
-            self.world.debug.draw_string(point.location + carla.Location(x=sign_x * 3, y=sign_y * 3, z=2), str(i),
-                                         color=carla.Color(0, 0, 255), life_time=2.0)
+    # ------------------------------------------------------------------ spectator
+    def _set_birdview(self):
+        sp0 = self.world.get_map().get_spawn_points()[0]
+        spectator = self.world.get_spectator()
+        spectator.set_transform(
+            carla.Transform(
+                sp0.location + carla.Location(z=60),
+                carla.Rotation(pitch=-90, yaw=0, roll=0),
+            )
+        )
 
-    def render_route(self, route):
-        spawn_points_list = [self.world.map.get_spawn_points()[index] for index in route]
-        for i, point in enumerate(spawn_points_list):
-            number = route[i]
-            begin = point.location + carla.Location(z=1.25)
-            angle = math.radians(point.rotation.yaw)
-            sign_x = -np.sin(angle)
-            sign_y = np.cos(angle)
-            end = begin + carla.Location(x=math.cos(angle), y=math.sin(angle))
-            color_point = carla.Color(0, 255, 0) if i == 0 else carla.Color(255, 0, 0)
-            self.world.debug.draw_arrow(begin, end, arrow_size=1, life_time=0, thickness=0.5, color=color_point)
-            self.world.debug.draw_string(point.location + carla.Location(x=sign_x * 3, y=sign_y * 3, z=2), str(number),
-                                         color=carla.Color(0, 0, 255), life_time=2.0)
+    # ------------------------------------------------------------------ primitives
+    def draw_all_spawns(self, life=60.0):
+        for idx, sp in enumerate(self.world.get_map().get_spawn_points()):
+            loc = sp.location + carla.Location(z=1.25)
+            yaw_rad = math.radians(sp.rotation.yaw)
+            arrow_end = loc + carla.Location(x=math.cos(yaw_rad), y=math.sin(yaw_rad))
 
-        if self.route_waypoints is None:
-            start_wp, end_wp = [self.world.map.get_waypoint(spawn.location) for spawn in spawn_points_list]
-            self.route_waypoints = compute_route_waypoints(self.world.map, start_wp, end_wp, resolution=1.0)
-        self._draw_path_server(skip=3)
+            # arrow
+            self.debug.draw_arrow(
+                loc,
+                arrow_end,
+                thickness=0.4,
+                arrow_size=2.0,
+                color=carla.Color(255, 0, 0),
+                life_time=life,
+                persistent_lines=True,
+            )
+            # label
+            offset = carla.Location(x=-math.sin(yaw_rad) * 3, y=math.cos(yaw_rad) * 3, z=2)
+            self.debug.draw_string(
+                sp.location + offset,
+                str(idx),
+                draw_shadow=False,
+                color=carla.Color(0, 255, 255),
+                life_time=life,
+            )
 
-    def step(self):
-        if self.is_done():
-            raise Exception("Step called after CarlaDataCollector was done.")
-        # Tick game
-        self.world.tick()
+    def draw_route(self, start_idx: int, end_idx: int, life=60.0, skip: int = 2):
+        spawn_pts = self.world.get_map().get_spawn_points()
+        start_wp = self.world.get_map().get_waypoint(spawn_pts[start_idx].location)
+        end_wp   = self.world.get_map().get_waypoint(spawn_pts[end_idx].location)
 
-    def is_done(self):
-        return self.done
+        route = self._compute_route(start_wp, end_wp)
+        z = 1.25
+        for i in range(0, len(route) - 1, skip + 1):
+            w0, w1 = route[i][0], route[i + 1][0]
 
-    def _draw_path_server(self, life_time=60.0, skip=0):
-        """
-            Draw a connected path from start of route to end.
-            Green node = start
-            Red node   = point along path
-            Blue node  = destination
-        """
-        for i in range(0, len(self.route_waypoints) - 1, skip + 1):
-            z = 1.25
-            w0 = self.route_waypoints[i][0]
-            w1 = self.route_waypoints[i + 1][0]
-            self.world.debug.draw_line(
+            self.debug.draw_line(
                 w0.transform.location + carla.Location(z=z),
                 w1.transform.location + carla.Location(z=z),
-                thickness=0.01, color=carla.Color(255, 0, 0),
-                life_time=life_time, persistent_lines=False)
-            self.world.debug.draw_point(
-                w0.transform.location + carla.Location(z=z), 0.1,
-                carla.Color(0, 255, 0) if i == 0 else carla.Color(0, 0, 255),
-                life_time, False)
-        self.world.debug.draw_point(
-            self.route_waypoints[-1][0].transform.location + carla.Location(z=z), 0.1,
+                thickness=0.15,
+                color=carla.Color(255, 0, 0),
+                life_time=life,
+                persistent_lines=True,
+            )
+
+            self.debug.draw_point(
+                w0.transform.location + carla.Location(z=z),
+                0.2,
+                carla.Color(0, 255 if i == 0 else 0, 0 if i == 0 else 255),
+                life,
+                False,
+            )
+
+        # final destination dot
+        self.debug.draw_point(
+            route[-1][0].transform.location + carla.Location(z=z),
+            0.2,
             carla.Color(0, 0, 255),
-            life_time, False)
+            life,
+            False,
+        )
+
+
+    # helper ----------------------------------------------------------
+    def _compute_route(self, start_wp, end_wp, resolution=1.0):
+        """
+        Replacement for carla_env.navigation.planner.compute_route_waypoints
+        in case that module is not available.
+        """
+        route = [(start_wp, 0)]
+
+        current = start_wp
+        while current.transform.location.distance(end_wp.transform.location) > resolution:
+            next_wps = current.next(resolution)
+            current = min(next_wps, key=lambda w: w.transform.location.distance(end_wp.transform.location))
+            route.append((current, 0))
+        route.append((end_wp, 0))
+        return route
+
+    # ------------------------------------------------------------------
+    def tick(self):
+        self.world.tick()
+
+    def close(self):
+        if self.carla_proc is not None:
+            self.carla_proc.kill()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CLI entry-point
+# ──────────────────────────────────────────────────────────────────────────────
+def main(argv: Optional[List[str]] = None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", default=2000, type=int)
+    parser.add_argument("--fps", default=20, type=int)
+    parser.add_argument("--map", default="Town05")
+    parser.add_argument("--route", nargs=2, type=int, metavar=("START", "END"),
+                        help="indices of spawn points to connect with a poly-line")
+    parser.add_argument("--start-carla", action="store_true",
+                        help="launch CARLA from $CARLA_ROOT automatically")
+    args = parser.parse_args(argv)
+
+    carla_proc = _launch_carla(args.fps) if args.start_carla else None
+    if carla_proc is not None:
+        time.sleep(6)  # give UE4 a moment to boot
+
+    drawer = BirdViewDrawer(
+        host=args.host,
+        port=args.port,
+        town=args.map,
+        fps=args.fps,
+        carla_proc=carla_proc,
+    )
+
+    try:
+        drawer.draw_all_spawns()
+        if args.route:
+            drawer.draw_route(args.route[0], args.route[1])
+        drawer.tick()  # flush the draw queue
+        print("Primitives sent to server.  Keep the script alive to keep them on-screen.")
+        time.sleep(60)  # keep alive long enough to inspect
+    finally:
+        drawer.close()
 
 
 if __name__ == "__main__":
-    argparser = argparse.ArgumentParser()
-    argparser.add_argument("--host", default="localhost", type=str, help="IP of the host server (default: 127.0.0.1)")
-    argparser.add_argument("--port", default=2000, type=int, help="TCP port to listen to (default: 2000)")
-    argparser.add_argument("--fps", default=20, type=int, help="FPS. Delta time between samples is 1/FPS")
-    argparser.add_argument("--map", default="Town10HD", type=str, help="Carla map")
-    args = argparser.parse_args()
-
-    # Create vehicle and actors for data collecting
-    env = CarlaBirdView(host=args.host, port=args.port, fps=args.fps, start_carla=False, map=args.map)
-
-    render_route_waypoints = ()
-
-    # While there are more images to collect
-    while not env.is_done():
-        # Take action
-        env.step()
-        if len(render_route_waypoints) == 0:
-            env.render()
-        else:
-            env.render_route(render_route_waypoints)
-
-
-    # Destroy carla actors
-    env.close()
+    main()

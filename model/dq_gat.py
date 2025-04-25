@@ -7,12 +7,14 @@ from typing import Callable, Dict, List, Optional, Tuple, Type, Union
 from gymnasium import spaces
 from stable_baselines3.common.policies import MultiInputActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from stable_baselines3.sac.policies import MultiInputPolicy
+from torchvision.models import resnet18, ResNet18_Weights
 
 class ResNetEncoder(nn.Module):
     """CNN-based feature extractor using ResNet-18"""
     def __init__(self, output_dim=512):
         super(ResNetEncoder, self).__init__()
-        resnet = resnet18(pretrained=True)
+        resnet = resnet18(weights=ResNet18_Weights.DEFAULT)
         self.feature_extractor = nn.Sequential(*list(resnet.children())[:-1]) 
         self.fc = nn.Linear(resnet.fc.in_features, output_dim)  
 
@@ -181,3 +183,53 @@ class CustomActorCriticPolicy(MultiInputActorCriticPolicy):
 
     def _build_mlp_extractor(self) -> None:
         self.mlp_extractor = CustomNetwork(feature_dim=256)
+
+class BCPolicy(nn.Module):
+    """
+    DQ-GAT encoder → 3-D control vector (steer, throttle, brake)
+    throttle/brake are squashed to [0,1] with Sigmoid
+    steer   is squashed to (-1,1)   with Tanh
+    """
+    def __init__(self):
+        super().__init__()
+        self.backbone = DQGAT()         # outputs (B,256)
+        self.head     = nn.Sequential(
+            nn.Linear(256, 256), nn.ReLU(),
+            nn.Linear(256, 3)
+        )
+
+    def forward(self, obs_dict):
+        feat = self.backbone(obs_dict["bev_image"], obs_dict["agent_feats"])
+        raw  = self.head(feat)                  # (B,3)
+        steer   = torch.tanh(raw[:,0:1])        # (‑1,1)
+        thr_brk = torch.sigmoid(raw[:,1:])      # (0,1)
+        return torch.cat([steer, thr_brk], dim=1)   # (B,3)
+
+class CustomDictFeatureExtractor(BaseFeaturesExtractor):
+    def __init__(self, observation_space: spaces.Dict):
+        super().__init__(observation_space, features_dim=256)
+        self.DQGAT = DQGAT()  # Your custom module
+
+    def forward(self, observations: dict) -> torch.Tensor:
+        return self.DQGAT.forward(observations['bev_image'], observations['agent_feats'])
+    
+class CustomSACPolicy(MultiInputPolicy):
+    def __init__(
+        self,
+        observation_space: spaces.Dict,
+        action_space: spaces.Space,
+        lr_schedule: Callable[[float], float],
+        *args,
+        **kwargs,
+    ):
+        kwargs["features_extractor_class"] = CustomDictFeatureExtractor
+        kwargs["features_extractor_kwargs"] = {}  # if DQGAT needs config
+        kwargs["net_arch"] = [256, 256]  # network sizes for actor and critics
+        kwargs["activation_fn"] = nn.ReLU
+        super().__init__(
+            observation_space,
+            action_space,
+            lr_schedule,
+            *args,
+            **kwargs,
+        )

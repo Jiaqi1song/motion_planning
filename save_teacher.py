@@ -1,12 +1,7 @@
-import warnings
-import os
-
-warnings.filterwarnings("ignore")
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 import argparse
 import config
 import time
+from tqdm import tqdm
 parser = argparse.ArgumentParser(description="Trains a CARLA agent")
 parser.add_argument("--host", default="localhost", type=str, help="IP of the host server (default: 127.0.0.1)")
 parser.add_argument("--port", default=2000, type=int, help="TCP port to listen to (default: 2000)")
@@ -16,8 +11,7 @@ parser.add_argument("--no_render", action="store_false", help="If True, render t
 parser.add_argument("--fps", type=int, default=15, help="FPS to render the environment")
 parser.add_argument("--num_checkpoints", type=int, default=20, help="Checkpoint frequency")
 parser.add_argument("--config", type=str, default="1", help="Config to use (default: 1)")
-parser.add_argument("--map", type=str, default="Town05", help="Map used in the environment (default: Town07)")
-
+parser.add_argument("--map", type=str, default="Town10HD", help="Map used in the environment (default: Town07)")
 args = vars(parser.parse_args())
 config.set_config(args["config"])
 
@@ -31,6 +25,7 @@ from carla_env.state_commons import create_encode_state_fn, load_vae, encode_sta
 from carla_env.rewards import reward_functions
 from utils import HParamCallback, TensorboardCallback, write_json, parse_wrapper_class
 from model.dq_gat import *
+import os
 
 from config import CONFIG
 print(CONFIG)
@@ -48,36 +43,31 @@ if CONFIG["algorithm"] not in algorithm_dict:
 AlgorithmRL = algorithm_dict[CONFIG["algorithm"]]
 dqgat_model = DQGAT()
 encode_state_fn = encode_state_dqgat(dqgat_model)
-
-env = CarlaDrivingEnv(host=args["host"], port=args["port"],
+from carla_env.envs.carla_autopilot_env import CarlaAutoPilotEnv
+env = CarlaAutoPilotEnv(
+    host=args["host"], port=args["port"],
                     reward_fn=reward_functions[CONFIG["reward_fn"]],
                     encode_state_fn=encode_state_fn, 
                     fps=args["fps"], action_smoothing=CONFIG["action_smoothing"],
                     action_space_type='continuous', activate_render=args["no_render"], map=args["map"],
-                    training_scene_names=CONFIG["training_scenes"])
+                    training_scene_names=CONFIG["training_scenes"]
+)   # <- flag
+obs = env.reset()
+done = False
+target_frames = 150000
 
-for wrapper_class_str in CONFIG["wrappers"]:
-    wrap_class, wrap_params = parse_wrapper_class(wrapper_class_str)
-    env = wrap_class(env, *wrap_params)
+# Initialize tqdm progress bar
+with tqdm(total=target_frames, desc="Recording frames") as pbar:
+    while env.recorder.frames < target_frames:
+        prev_frames = env.recorder.frames
 
-if reload_model == "":
-    model = AlgorithmRL(CustomSACPolicy, env, verbose=1, seed=seed, tensorboard_log=log_dir, device='cuda',
-                        **CONFIG["algorithm_params"])
-    model_suffix = f"{int(time.time())}_id{args['config']}"
-else:
-    model = AlgorithmRL.load(reload_model, env=env, device='cuda', seed=seed, **CONFIG["algorithm_params"])
-    model_suffix = f"{reload_model.split('/')[-2].split('_')[-1]}_finetuning"
+        # Step the environment
+        obs, _, done, _ = env.step(None)
 
+        # Update progress bar by the number of new frames recorded
+        pbar.update(env.recorder.frames - prev_frames)
 
-model_name = f'{model.__class__.__name__}_{model_suffix}'
+        if done:
+            env.reset()  # Reset if episode ends
 
-model_dir = os.path.join(log_dir, model_name)
-new_logger = configure(model_dir, ["stdout", "csv", "tensorboard"])
-model.set_logger(new_logger)
-write_json(CONFIG, os.path.join(model_dir, 'config.json'))
-
-model.learn(total_timesteps=total_timesteps,
-            callback=[HParamCallback(CONFIG), TensorboardCallback(1), CheckpointCallback(
-                save_freq=total_timesteps // args["num_checkpoints"],
-                save_path=model_dir,
-                name_prefix="model")], reset_num_timesteps=False)
+env.close()

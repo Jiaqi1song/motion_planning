@@ -5,7 +5,7 @@ from utils import lr_schedule
 
 algorithm_params = {
     "PPO": dict(
-        learning_rate=lr_schedule(1e-4, 1e-6, 2),
+        learning_rate=lr_schedule(1e-3, 1e-5, 2),
         gamma=0.98,
         gae_lambda=0.95,
         clip_range=0.2,
@@ -16,17 +16,17 @@ algorithm_params = {
                            net_arch=[dict(pi=[500, 300], vf=[500, 300])])
     ),
     "SAC": dict(
-        learning_rate=lr_schedule(5e-4, 1e-6, 2),
-        buffer_size=300000,
-        batch_size=256,
+        learning_rate=lr_schedule(1e-4, 5e-7, 2),
+        buffer_size=30000,
+        batch_size=128,
         ent_coef='auto',
         gamma=0.98,
         tau=0.02,
-        train_freq=64,
-        gradient_steps=64,
-        learning_starts=10000,
+        train_freq=64,              # update every 1 step
+        gradient_steps=64,          # 1 update per env step
+        learning_starts=5000,      # start learning earlier
         use_sde=True,
-        policy_kwargs=dict(log_std_init=-3, net_arch=[400, 300]),
+        policy_kwargs=dict(log_std_init=-3, net_arch=[500, 300]),
     ),
     "DDPG": dict(
         gamma=0.98,
@@ -65,10 +65,10 @@ reward_params = {
         min_speed=0,  # km/h
         max_speed=30.0,  # km/h
         target_speed=15.0,  # kmh
-        max_distance=2.0,  # Max distance from center before terminating
+        max_distance=10.0,  # Max distance from center before terminating
         max_std_center_lane=0.35,
         max_angle_center_lane=90,
-        penalty_reward=-10,
+        penalty_reward=-2,
     ),
      "reward_fn_5_no_early_stop": dict(
          early_stop=False,
@@ -93,8 +93,8 @@ reward_params = {
 }
 
 _CONFIG_1 = {
-    "algorithm": "PPO",
-    "algorithm_params": algorithm_params["PPO"],
+    "algorithm": "SAC",
+    "algorithm_params": algorithm_params["SAC"],
     "state": states["3"],
     "vae_model": "vae_64",
     "action_smoothing": 0.75,
@@ -103,9 +103,9 @@ _CONFIG_1 = {
     "obs_res": (160, 80),
     "seed": 100,
     "wrappers": [],
-    "training_scenes": ["Int-Cross", "Int-Left", "Int-Right", "T-Merge", "T-Left", "Follow-Lane"]
+    "training_scenes": ["T-Left"]
 }
-
+    # "training_scenes": ["Int-Cross", "Int-Left", "Int-Right", "T-Merge", "T-Left", "Follow-Lane"]
 _CONFIG_2 = {
     "algorithm": "SAC",
     "algorithm_params": algorithm_params["SAC"],

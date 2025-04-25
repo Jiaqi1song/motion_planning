@@ -21,21 +21,23 @@ def create_reward_fn(reward_fn):
         if early_stop:
             # Stop if speed is less than 1.0 km/h after the first 5s of an episode
             global low_speed_timer
-            low_speed_timer += 1.0 / env.fps
             speed = env.vehicle.get_speed()
-            if low_speed_timer > 5.0 and speed < 1.0 and env.current_waypoint_index >= 1:
+            if speed < 1.0:
+                low_speed_timer += 1.0 / env.fps
+                            
+            if low_speed_timer > 30:
                 env.terminal_state = True
                 terminal_reason = "Vehicle stopped"
 
-            # Stop if distance from center > max distance
-            if env.distance_from_center > max_distance:
-                env.terminal_state = True
-                terminal_reason = "Off-track"
+            # # Stop if distance from center > max distance
+            # if env.distance_from_center > max_distance:
+            #     env.terminal_state = True
+            #     terminal_reason = "Off-track"
 
-            # Stop if speed is too high
-            if max_speed > 0 and speed > max_speed:
-                env.terminal_state = True
-                terminal_reason = "Too fast"
+            # # Stop if speed is too high
+            # if max_speed > 0 and speed > max_speed:
+            #     env.terminal_state = True
+            #     terminal_reason = "Too fast"
 
         # Calculate reward
         reward = 0
@@ -123,64 +125,86 @@ reward_functions["reward_fn_waypoints"] = create_reward_fn(reward_fn_waypoints)
 # ================================================================================
 W_PROGRESS = 1.0
 W_COMFORT = 0.2
-W_AREA = 0.8
+W_AREA = 1.0
+W_COLLISION = 2.0
 
-COMFORT_ACCEL_MAX = 5.0                # m/s^2
-COMFORT_STEERING_MAX = np.deg2rad(40)  # in radians
+MAX_COMFORT_ACCEL = 3.0                # m/s^2
+MAX_COMFORT_STEER = 0.3                # normalized [-1, 1]
+MAX_CENTER_DEVIATION = 1.5            # meters
+MAX_ANGLE_DEVIATION = np.deg2rad(30)  # 30 degrees
+MAX_STD_DEVIATION = 0.5               # meters
+
+MIN_SPEED_THRESHOLD = 0.5             # m/s, consider vehicle idle if below this
+STUCK_PENALTY = 1.0                    # penalty for no motion
+
+LANE_EXIT_THRESHOLD = 3.0             # meters, assume off-lane if above this
+
+# ENABLE_LOGGING = False
 
 def reward_fn_av(env):
     """
-    Overall reward function for autonomous vehicle training combining:
-    
-    - Progress Reward: Rewards progress by counting passed waypoints; penalizes if stuck.
-    - Comfort Reward: Rewards smooth driving (acceptable acceleration, jerk, and steering).
-    - Drive-in-Area Reward: Rewards staying centered in the driving lane.
-    
-    Each reward is weighted differently.
+    Enhanced reward function for autonomous driving with:
+    - Progress toward waypoints
+    - Comfort via smooth acceleration and steering
+    - Staying centered in the lane
+    - Collision and lane exit penalties
+    - Stuck penalty
     """
+    reward = 0.0
 
-    # --- Progress Component ---
-    # Here we assume the environment tracks waypoint progress via indices.
-    progress_delta = env.current_waypoint_index - env.prev_waypoint_index
-    if progress_delta > 0:
-        progress_reward = progress_delta
-    else:
-        # Penalize if there is no progress (stuck or not moving forward)
-        progress_reward = -0.5
+    # --- Progress Reward ---
+    progress = env.current_waypoint_index - env.prev_waypoint_index
+    progress_reward = progress if progress > 0 else -0.1
+    reward += W_PROGRESS * progress_reward
 
-    # --- Comfort Component ---
-    current_accel = env.vehicle.get_acceleration()
-    ego_transform = env.vehicle.get_transform()
-    yaw_rad = math.radians(ego_transform.rotation.yaw)
-    
-    # Transform acceleration similarly.
-    ax_world = current_accel.x
-    ay_world = current_accel.y
-    rel_ax = ax_world * math.cos(-yaw_rad) - ay_world * math.sin(-yaw_rad)
-    rel_ay = ax_world * math.sin(-yaw_rad) + ay_world * math.cos(-yaw_rad)
-    acceleration = np.sqrt(rel_ax**2 + rel_ay**2)
-    steering = env.vehicle.control.steer 
-    
-    # Compute factors (in [0,1]) that are 1 when the value is perfectly comfortable and decrease if too high.
-    accel_factor = max(1.0 - abs(acceleration) / COMFORT_ACCEL_MAX, 0.0)
-    steering_factor = max(1.0 - abs(steering) / COMFORT_STEERING_MAX, 0.0)
-    comfort_reward = accel_factor * steering_factor
+    # --- Comfort Reward ---
+    accel = env.vehicle.get_acceleration()
+    steer = env.vehicle.control.steer
+    yaw = math.radians(env.vehicle.get_transform().rotation.yaw)
 
-    # --- Drive-in-Area Component ---
-    # Use a centering factor based on the vehicle's distance from the lane center.
-    centering_factor = max(1.0 - env.distance_from_center / max_distance, 0.0)
-    angle = env.vehicle.get_angle(env.current_waypoint)
-    angle_factor = max(1.0 - abs(angle / np.deg2rad(max_angle_center_lane)), 0.0)
-    std = np.std(env.distance_from_center_history)
-    distance_std_factor = max(1.0 - abs(std / max_std_center_lane), 0.0)
+    rel_ax = accel.x * math.cos(-yaw) - accel.y * math.sin(-yaw)
+    rel_ay = accel.x * math.sin(-yaw) + accel.y * math.cos(-yaw)
+    a_mag = np.sqrt(rel_ax**2 + rel_ay**2)
 
-    drive_area_reward = centering_factor * angle_factor * distance_std_factor
+    accel_penalty = np.clip(a_mag / MAX_COMFORT_ACCEL, 0.0, 1.0)
+    steer_penalty = np.clip(abs(steer) / MAX_COMFORT_STEER, 0.0, 1.0)
 
-    # --- Total Reward ---
-    total_reward = (W_PROGRESS * progress_reward +
-                    W_COMFORT * comfort_reward +
-                    W_AREA * drive_area_reward)
-                    
-    return total_reward
+    comfort_reward = 1.0 - 0.5 * (accel_penalty + steer_penalty)
+    reward += W_COMFORT * comfort_reward
+
+    # --- Stay in Lane Reward ---
+    center_dev = env.distance_from_center
+    angle_dev = env.vehicle.get_angle(env.current_waypoint)
+    std_dev = np.std(env.distance_from_center_history)
+
+    centering = max(1 - center_dev / MAX_CENTER_DEVIATION, 0.0)
+    angle_factor = max(1 - abs(angle_dev) / MAX_ANGLE_DEVIATION, 0.0)
+    std_factor = max(1 - std_dev / MAX_STD_DEVIATION, 0.0)
+
+    area_reward = centering * angle_factor * std_factor
+    reward += W_AREA * area_reward
+
+    # --- Collision Penalty ---
+    if env.collided:
+        reward -= W_COLLISION
+
+    # --- Stuck Penalty ---
+    if env.vehicle.get_speed() < MIN_SPEED_THRESHOLD and progress <= 0:
+        reward -= STUCK_PENALTY
+
+    # --- Off-lane Penalty ---
+    if center_dev > LANE_EXIT_THRESHOLD:
+        reward -= W_AREA * 1.0
+
+    # --- Final Clipping ---
+    reward = float(np.clip(reward, -W_COLLISION - STUCK_PENALTY - W_AREA, 2.0))
+
+    # if ENABLE_LOGGING:
+    #     print(f"[Reward] Progress: {progress_reward:.2f}, Comfort: {comfort_reward:.2f}, Area: {area_reward:.2f}, Final: {reward:.2f}")
+
+    return reward
 
 reward_functions["av_reward"] = create_reward_fn(reward_fn_av)
+
+
+
